@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jio Cybersecurity Suite</title>
+    
+    <!-- Google Fonts -->
+    
+    <link rel="stylesheet" href="/static/fonts/portfolio-fonts.css">
+    <link rel="stylesheet" href="/static/portfolio-theme.css?v=1.0.1">
+    <script src="/static/lucide.min.js"></script>
+</head>
+<body>
+    <!-- Ambient Background Canvas from Portfolio -->
+    <canvas id="ambient-canvas" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; pointer-events: none;"></canvas>
+    
+    <!-- Subtle Background Grid -->
+    <div class="saas-grid-bg"></div>
+    
+    <!-- Login Modal Overlay (Removed) -->
+
+    <!-- Top Glowing Navbar -->
+    <header class="navbar">
+        <div class="logo-container">
+            <div class="logo-glow"></div>
+            <i data-lucide="shield-alert" class="logo-icon"></i>
+            <span class="logo-text">JIO<span class="accent-text"> CYBERSECURITY SUITE</span></span>
+            <span class="badge">SEC-OPS v3.0 | SECURED</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:1rem;">
+            <div class="status-indicator">
+                <span class="status-pulse"></span>
+                <span class="status-label">CLUSTER ONLINE</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Product Selection Hub (Visible by default after login) -->
+    <div id="selector-container" class="selector-container">
+        <div class="selector-header">
+            <h2>JIO<span class="accent-text"> CYBERSECURITY SUITE</span></h2>
+            <p>Select an isolated tactical subsystem to initiate security intelligence operations.</p>
+        </div>
+        <div class="selector-cards">
+            <!-- Card 1: CVE Scanner (JCS0) -->
+            <div class="selector-card card-cve">
+                <div class="card-glow"></div>
+                <div class="card-icon"><i data-lucide="shield-alert"></i></div>
+                <h3>JCS0 — Threat Intelligence</h3>
+                <p>Automated network discovery, passive/active service mapping, vulnerability assessment, and deep LLM threat narrative reports.</p>
+                <span class="card-action">ENTER JCS0 <i data-lucide="arrow-right"></i></span>
+            </div>
+            <!-- Card 2: Pentest Suite (JCS1) -->
+            <div class="selector-card card-pentest">
+                <div class="card-glow"></div>
+                <div class="card-icon"><i data-lucide="terminal"></i></div>
+                <h3>JCS1 — Interactive Pentesting</h3>
+                <p>Active vulnerability exploitation, real-time cyberpunk console logs, automated credential harvesting, and an interactive command shell emulator.</p>
+                <span class="card-action">LAUNCH JCS1 <i data-lucide="arrow-right"></i></span>
+            </div>
+            <!-- Card 3: Malware Analysis (JCS2) -->
+            <div class="selector-card card-malware">
+                <div class="card-glow"></div>
+                <div class="card-icon"><i data-lucide="bug"></i></div>
+                <h3>JCS2 — Malware Analysis</h3>
+                <p>Deep static analysis, YARA scanning, binary disassembly, and interactive hex viewing for malware detection.</p>
+                <span class="card-action">LAUNCH JCS2 <i data-lucide="arrow-right"></i></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main CVE Scanner Dashboard (Hidden by default) -->
+    <main class="dashboard-grid" id="cve-dashboard" style="display: none;">
+        <!-- Left Panel: Orchestration & Campaign History -->
+        <section class="panel panel-left">
+            <div class="panel-header">
+                <i data-lucide="terminal"></i>
+                <h2>JCS0 Campaign Orchestrator</h2>
+                <button class="btn-back" onclick="showSelector()" title="Back to Hub" style="margin-left:auto; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 4px 8px; border-radius: 6px; font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                    <i data-lucide="home" style="width:12px;height:12px;color:var(--accent-blue);"></i> Hub
+                </button>
+            </div>
+            
+            <!-- Scan Trigger Form -->
+            <div class="form-container">
+                <p class="section-desc">Initiate automated host discovery and service triage campaigns.</p>
+                <form id="scan-form">
+                    <div class="input-group">
+                        <label for="target-input">Target Range / Hostname</label>
+                        <div class="input-wrapper">
+                            <i data-lucide="globe" class="input-icon"></i>
+                            <input type="text" id="target-input" placeholder="e.g., google.com or 192.168.1.0/24" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-submit" id="btn-scan">
+                        <span>LAUNCH CAMPAIGN</span>
+                        <i data-lucide="play-circle"></i>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Campaign History List -->
+            <div class="campaign-history-container">
+                <div class="panel-subheader">
+                    <h3>Recent Campaigns</h3>
+                    <button id="btn-refresh" class="btn-icon-only"><i data-lucide="rotate-cw"></i></button>
+                </div>
+                <div id="campaign-list" class="scrollable-list">
+                    <!-- Loaded dynamically -->
+                    <div class="loading-placeholder">Loading campaigns...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Panel: Topology Graph & AI Narrative Report -->
+        <section class="panel panel-right">
+            <!-- Top Half: Interactive Topology Visualizer -->
+            <div class="sub-panel visualizer-panel">
+                <div class="panel-header">
+                    <i data-lucide="git-branch"></i>
+                    <h2>Active Network Topology Map</h2>
+                </div>
+                <div class="canvas-container" id="canvas-container">
+                    <div class="canvas-legend">
+                        <span class="legend-item"><span class="dot dot-gateway"></span> Gateway</span>
+                        <span class="legend-item"><span class="dot dot-host"></span> Node</span>
+                    </div>
+                    <canvas id="topology-canvas"></canvas>
+                    <div class="no-selection-overlay" id="no-selection-overlay">
+                        <i data-lucide="mouse-pointer-click"></i>
+                        <p>Select a completed campaign from the left panel to load topology map</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Half: AI Intelligence Narrative Report -->
+            <div class="sub-panel report-panel">
+                <div class="panel-header">
+                    <i data-lucide="cpu"></i>
+                    <h2>AI Threat Narrative &amp; Remediation Report</h2>
+                    <div style="display:flex; gap: 0.5rem; align-items: center; margin-left: auto;">
+                        <button id="btn-generate-report" class="btn-submit btn-accent hide">
+                            <span>Run AI Analysis</span>
+                            <i data-lucide="wand-2"></i>
+                        </button>
+                        <button id="btn-download-report" class="btn-submit" style="background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.4); color: #10b981; font-size: 0.7rem; padding: 0.4rem 0.8rem;" onclick="downloadReport()" title="Download AI narrative as .txt">
+                            <i data-lucide="download"></i>
+                            <span>Report</span>
+                        </button>
+                        <button id="btn-export-json" class="btn-submit" style="background: rgba(139,92,246,0.15); border: 1px solid rgba(139,92,246,0.4); color: #8b5cf6; font-size: 0.7rem; padding: 0.4rem 0.8rem;" onclick="exportCampaign()" title="Export full campaign as JSON">
+                            <i data-lucide="file-json"></i>
+                            <span>Export</span>
+                        </button>
+                        <button id="btn-export-excel" class="btn-submit" style="background: rgba(245,158,11,0.15); border: 1px solid rgba(245,158,11,0.4); color: #f59e0b; font-size: 0.7rem; padding: 0.4rem 0.8rem;" onclick="exportCampaignExcel()" title="Export report as Excel">
+                            <i data-lucide="file-spreadsheet"></i>
+                            <span>Excel</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="report-content" id="report-view">
+                    <div class="report-placeholder">
+                        <i data-lucide="file-text"></i>
+                        <p>Narrative threat logs will appear once AI reasoning is triggered.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Main Pentest Suite Dashboard (Hidden by default) -->
+    <main class="dashboard-grid" id="pentest-dashboard" style="display: none; position: relative;">
+        <!-- Column 1: Target Config & History -->
+        <section class="panel panel-pentest-left" style="display: flex; flex-direction: column; justify-content: space-between; padding: 1.25rem; gap: 1.25rem; border-color: rgba(239, 68, 68, 0.2);">
+            <div style="display: flex; flex-direction: column; gap: 1.25rem;">
+                <div class="panel-header" style="border-bottom: 1px solid rgba(239, 68, 68, 0.2); padding: 0 0 0.75rem 0; margin-bottom: 0;">
+                    <i data-lucide="shield" style="color: #ef4444; filter: drop-shadow(0 0 5px rgba(239,68,68,0.5));"></i>
+                    <h2 style="color: #ef4444; font-size: 0.95rem;">Target Config</h2>
+                    <button class="btn-back" id="btn-back-to-hub" title="Back to Hub" style="margin-left:auto; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 4px 8px; border-radius: 6px; font-size: 0.7rem; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                        <i data-lucide="home" style="width:12px;height:12px;color:#ef4444;"></i> Hub
+                    </button>
+                </div>
+                
+                <p style="font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; margin: 0;">
+                    Specify your target IP address directly in your AI prompt (e.g., <em>"Scan 10.63.92.151..."</em>). The SecOps engine will extract it dynamically.
+                </p>
+                
+                <button type="button" id="btn-new-pentest" class="btn-submit" 
+                        style="width: 100%; margin-top: 0.25rem; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.45); color: #ef4444; font-weight: 700; cursor: pointer; padding: 12px; border-radius: 8px; font-size: 0.8rem; display: flex; align-items: center; justify-content: center; gap: 6px; transition: all 0.3s; text-shadow: 0 0 5px rgba(239,68,68,0.3);">
+                    <i data-lucide="plus-circle" style="width:14px;height:14px;color:#ef4444;"></i>
+                    <span>NEW CAMPAIGN</span>
+                </button>
+		<button
+    type="button"
+    id="btn-modules-guide"
+    class="btn-submit"
+    style="width:100%;
+           margin-top:10px;
+           background:rgba(59,130,246,0.15);
+           border:1px solid #3b82f6;
+           color:#3b82f6;
+           font-weight:700;
+           padding:12px;
+           border-radius:8px;
+           display:flex;
+           align-items:center;
+           justify-content:center;
+           gap:8px;
+           cursor:pointer;">
+
+    <i data-lucide="book-open" style="width:14px;height:14px;color:#3b82f6;"></i>
+
+    <span>MODULES GUIDE</span>
+
+</button>
+            </div>
+            
+            <div class="campaign-history-container" style="flex: 1; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 1rem; display: flex; flex-direction: column; justify-content: space-between; min-height: 0;">
+                <div class="panel-subheader" style="padding: 0 0 0.5rem 0; margin-bottom: 0;">
+                    <h3 style="font-size: 0.75rem;">Recent Campaigns</h3>
+                    <button id="btn-refresh-pentest" class="btn-icon-only"><i data-lucide="rotate-cw" style="width:12px;height:12px;"></i></button>
+                </div>
+                <div id="pentest-campaign-list" class="scrollable-list" style="flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;">
+                    <div class="loading-placeholder">Loading past tests...</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Column 2: AI Copilot Chat Hub (Center Stage) -->
+        <section class="panel panel-pentest-center" style="display: flex; flex-direction: column; border-color: rgba(239, 68, 68, 0.25); box-shadow: 0 0 20px rgba(239, 68, 68, 0.03);">
+            <div class="panel-header" style="border-bottom: 1px solid rgba(239, 68, 68, 0.2);">
+                <i data-lucide="bot" style="color: #ef4444; filter: drop-shadow(0 0 5px rgba(239,68,68,0.5));"></i>
+                <h2 style="color: #ef4444;">JCS1 AI Copilot Chat</h2>
+            </div>
+            
+            <!-- Chat Viewport -->
+            <div id="pentest-chat-container" class="chat-container" style="flex: 1; overflow-y: auto; padding: 1.25rem; display: flex; flex-direction: column; gap: 1rem; background: rgba(3, 7, 18, 0.3);">
+                <div class="chat-message agent">
+                    <div class="message-sender">JCS1 Agent</div>
+                    <div class="message-text">Awaiting target IP and execution instructions. Type a prompt below to launch a campaign!</div>
+                    <div class="message-time">00:00:00</div>
+                </div>
+            </div>
+            
+            <!-- Wide Premium Prompt Input Form at the Bottom -->
+            <div style="padding: 1.25rem; border-top: 1px solid rgba(239, 68, 68, 0.15); background: rgba(10, 15, 26, 0.4);">
+                <form id="pentest-form" style="display: flex; gap: 0.75rem; align-items: center;">
+                    <div style="flex: 1; position: relative;">
+                        <input type="text" id="pentest-prompt-input" placeholder="Type prompt (e.g., Scan 10.32.192.56 and ask before exploiting)..." required 
+                               style="width: 100%; background: rgba(0, 0, 0, 0.6); border: 1px solid rgba(239, 68, 68, 0.4); padding: 14px 16px; border-radius: 8px; color: #fff; font-family: var(--font-heading); font-size: 0.95rem; transition: all var(--transition-speed); box-shadow: inset 0 0 10px rgba(0,0,0,0.5);">
+                    </div>
+                    <button type="submit" class="btn-submit btn-pentest-submit" id="btn-launch-pentest" title="Initiate Campaign" 
+                            style="width: auto; padding: 14px 24px; background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.35)); border: 1px solid #ef4444; border-radius: 8px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 0.9rem; text-shadow: 0 1px 2px rgba(0,0,0,0.5); transition: all 0.3s;">
+                        <span>INITIATE SEQUENCE</span>
+                        <i data-lucide="zap" style="color:#ef4444;"></i>
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Column 3: Cyber-Console & Loot Bin (Stacked) -->
+        <div style="display: flex; flex-direction: column; gap: 1.5rem; min-height: 0;">
+            <!-- Top: Cyber-Console -->
+            <div class="panel" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
+                <div class="panel-header" style="padding: 0.75rem 1.25rem; display: flex; align-items: center;">
+                    <!-- macOS window controls -->
+                    <div class="mac-window-controls" style="display: flex; gap: 6px; margin-right: 12px; align-items: center;">
+                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: #ff5f56; border: 1px solid #e0443e;"></span>
+                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: #ffbd2e; border: 1px solid #dea123;"></span>
+                        <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background-color: #27c93f; border: 1px solid #1aab29;"></span>
+                    </div>
+                    <i data-lucide="terminal" style="color: #ff9f0a; margin-right: 6px; width: 16px; height: 16px;"></i>
+                    <h2 style="color: #f5f5f7; font-size: 0.85rem; font-weight: 500; text-transform: none; letter-spacing: normal; margin: 0;">Shell &amp; Exploit Console</h2>
+                    <div class="status-indicator" style="margin-left: auto; background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 6px; display: flex; align-items: center; gap: 4px;">
+                        <span class="status-pulse" id="terminal-session-pulse" style="background-color:#86868b; box-shadow:none; width:6px; height:6px;"></span>
+                        <span class="status-label" id="terminal-session-status" style="color:#86868b; font-size: 0.65rem;">OFFLINE</span>
+                    </div>
+                </div>
+                
+                <div class="terminal-container" id="terminal-container" style="flex: 1; display: flex; flex-direction: column; background: #010206; padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem; overflow: hidden; min-height: 0;">
+                    <!-- Stream logs -->
+                    <pre id="terminal-log-view" class="terminal-log-view" style="flex: 1; overflow-y: auto; white-space: pre-wrap; word-break: break-all; color: #a78bfa; margin-bottom: 0.5rem; line-height: 1.4;">[*] Subsystem idle. Configure targets and type an AI prompt to execute exploit modules...</pre>
+                    
+                    <!-- Interactive shell input -->
+                    <div class="terminal-input-row" style="display: flex; align-items: center; gap: 0.5rem; border-top: 1px solid rgba(245, 158, 11, 0.15); padding-top: 0.5rem;">
+                        <span class="terminal-prompt" id="terminal-prompt-label" style="color: #f59e0b; font-weight: 700;">jcs1-exploit:~$</span>
+                        <input type="text" id="terminal-input" placeholder="pseudo-terminal disconnected. Establish shell..." disabled autocomplete="off"
+                               style="flex: 1; background: transparent; border: none; color: #fff; font-family: var(--font-mono); font-size: 0.8rem; outline: none;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom: Loot Bin -->
+            <div class="panel" style="flex: 1; border-color: rgba(16, 185, 129, 0.2); min-height: 0; display: flex; flex-direction: column;">
+                <div class="panel-header" style="border-bottom: 1px solid rgba(16, 185, 129, 0.2); padding: 0.75rem 1.25rem;">
+                    <i data-lucide="trophy" style="color: #10b981; filter: drop-shadow(0 0 5px rgba(16,185,129,0.5));"></i>
+                    <h2 style="color: #10b981; font-size: 0.9rem;">Harvested Loot Bin</h2>
+                </div>
+
+                <div class="loot-tabs" style="display: flex; background: rgba(0,0,0,0.3); border-bottom: 1px solid rgba(16, 185, 129, 0.15);">
+                    <button class="loot-tab active" id="tab-creds" style="flex: 1; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); padding: 8px; font-size: 0.75rem; cursor: pointer; font-weight: 600; transition: all 0.3s;">Credentials</button>
+                    <button class="loot-tab" id="tab-flags" style="flex: 1; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); padding: 8px; font-size: 0.75rem; cursor: pointer; font-weight: 600; transition: all 0.3s;">Flags &amp; Files</button>
+                    <button class="loot-tab" id="tab-sysinfo" style="flex: 1; background: transparent; border: none; border-bottom: 2px solid transparent; color: var(--text-muted); padding: 8px; font-size: 0.75rem; cursor: pointer; font-weight: 600; transition: all 0.3s;">System Info</button>
+                </div>
+
+                <div class="loot-content" id="loot-content-view" style="flex: 1; overflow-y: auto; padding: 1rem;">
+                    <div class="loot-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; opacity: 0.5; text-align: center; gap: 0.5rem; font-size: 0.8rem;">
+                        <i data-lucide="database" style="width:28px;height:28px;opacity:0.6;"></i>
+                        <p>Credentials, flags, and post-exploitation evidence will catalog here.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating Permission Gate Modal Overlay -->
+        <div id="pentest-permission-modal" class="modal-overlay" style="display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(3, 7, 18, 0.85); backdrop-filter: blur(10px); z-index: 9999; align-items: center; justify-content: center; border-radius: 12px;">
+            <div class="modal-card" style="background: rgba(17, 24, 39, 0.95); border: 2px solid #ef4444; border-radius: 16px; padding: 2rem; width: 90%; max-width: 500px; box-shadow: 0 0 40px rgba(239, 68, 68, 0.25); animation: pulseBorder 2s infinite; position: relative;">
+                <div class="modal-header" style="display: flex; align-items: center; gap: 0.75rem; border-bottom: 1px solid rgba(239, 68, 68, 0.2); padding-bottom: 1rem; margin-bottom: 1.25rem;">
+                    <i data-lucide="shield-alert" style="color: #ef4444; width: 28px; height: 28px; filter: drop-shadow(0 0 8px rgba(239,68,68,0.6));"></i>
+                    <h3 style="color: #ef4444; margin: 0; font-size: 1.25rem; font-weight: 700; letter-spacing: 1px;">SECURITY AUTHORIZATION GATE</h3>
+                </div>
+                <div class="modal-body" style="margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem;">
+                    <p class="warn-title" style="color: #9ca3af; margin: 0; font-size: 0.9rem;">The Jcs1 AI Agent requests permission to launch:</p>
+                    <div class="action-details-card" style="background: rgba(239, 68, 68, 0.05); border: 1px dashed rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 1rem;">
+                        <h4 id="permission-action-title" style="color: #ef4444; margin: 0 0 0.5rem 0; font-size: 1rem; font-weight: 700;">SQL Injection & Database Audit</h4>
+                        <p id="permission-action-desc" style="color: #d1d5db; margin: 0; font-size: 0.85rem; line-height: 1.4; font-family: var(--font-mono);">Will execute union-based SQL injection on Port 8080. May leak schema and credentials.</p>
+                    </div>
+                    <p class="warn-footer" style="color: #f59e0b; margin: 0; font-size: 0.8rem; font-weight: 600; display: flex; align-items: center; gap: 4px;">⚠️ Active exploitation could result in service disruption or data leakage.</p>
+                </div>
+                <div class="modal-actions" style="display: flex; gap: 1rem;">
+                    <button id="btn-approve-action" class="btn-modal btn-approve" style="flex: 1; background: #10b981; border: 1px solid #059669; color: #fff; padding: 10px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 0.85rem; transition: all 0.3s; text-shadow: 0 1px 2px rgba(0,0,0,0.3);">
+                        <i data-lucide="check-circle-2" style="width:16px;height:16px;"></i> AUTHORIZE EXPLOIT
+                    </button>
+                    <button id="btn-deny-action" class="btn-modal btn-deny" style="flex: 1; background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; color: #ef4444; padding: 10px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 0.85rem; transition: all 0.3s;">
+                        <i data-lucide="x-circle" style="width:16px;height:16px;"></i> ABORT / SKIP
+                    </button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Main Malware Analysis Dashboard (JCS2) (Hidden by default) -->
+    <main id="malware-dashboard" style="display: none; height: calc(100vh - 60px); width: 100vw; position: relative; border: none; margin: 0; padding: 0;">
+        <iframe id="malware-iframe" src="" style="width: 100%; height: 100%; border: none; background: #0a0a0c;"></iframe>
+    </main>
+
+    <script src="/static/background.js?v=1.1.4"></script>
+    <script src="/static/portfolio-app-v2.js?v=2.0.3"></script>
+        <div id="modules-guide-modal" class="modal-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(3, 7, 18, 0.9); backdrop-filter: blur(10px); z-index: 9998; align-items: center; justify-content: center;">
+            <div class="modal-card" style="background: rgba(17, 24, 39, 0.98); border: 2px solid #3b82f6; border-radius: 16px; padding: 2rem; width: 90%; max-width: 800px; height: 80vh; overflow-y: auto; box-shadow: 0 0 40px rgba(59, 130, 246, 0.25);">
+                <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(59, 130, 246, 0.2); padding-bottom: 1rem; margin-bottom: 1.25rem;">
+                    <h2 style="color: #3b82f6; margin: 0;">JCS1 Attack Modules Reference</h2>
+                    <button id="btn-close-guide" style="background: none; border: none; color: #fff; font-size: 1.5rem; cursor: pointer; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">×</button>
+                </div>
+                <div id="modules-guide-content" style="color: #e5e7eb; line-height: 1.6; font-size: 0.9rem;">Loading guide...</div>
+            </div>
+        </div>
+	<div id="modules-guide-modal"
+     style="display:none;
+            position:fixed;
+            inset:0;
+            background:rgba(0,0,0,.8);
+            z-index:9999;
+            justify-content:center;
+            align-items:center;">
+
+    <div style="width:85%;
+                max-width:900px;
+                height:80%;
+                background:#111827;
+                border:2px solid #3b82f6;
+                border-radius:12px;
+                display:flex;
+                flex-direction:column;">
+
+        <div style="display:flex;
+                    justify-content:space-between;
+                    align-items:center;
+                    padding:18px;
+                    border-bottom:1px solid #374151;">
+
+            <h2 style="margin:0;color:#3b82f6;">
+                JCS1 Attack Modules Guide
+            </h2>
+
+            <button id="btn-close-guide"
+                    style="background:none;
+                           border:none;
+                           color:white;
+                           font-size:30px;
+                           cursor:pointer;">
+                ×
+            </button>
+
+        </div>
+
+        <div id="modules-guide-content"
+             style="flex:1;
+                    overflow:auto;
+                    padding:20px;
+                    color:white;">
+        </div>
+
+    </div>
+
+</div>
+</body>
+</html>

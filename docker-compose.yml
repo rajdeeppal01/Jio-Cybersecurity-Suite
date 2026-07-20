@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: jcs-postgres
+    environment:
+      POSTGRES_USER: jcs_user
+      POSTGRES_PASSWORD: jcs_password
+      POSTGRES_DB: jcs_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jcs_user -d jcs_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: jcs-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build: .
+    container_name: jcs-gateway
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - .:/app
+    ports:
+      - "8080:8000"
+    environment:
+      - DATABASE_URL=postgresql://jcs_user:jcs_password@postgres:5432/jcs_db
+      - REDIS_URL=redis://redis:6379/0
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PYTHONPATH=/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker_tier1:
+    build: .
+    container_name: jcs-worker-t1
+    command: python3 -m celery -A app.workers.celery_app worker -Q tier1 --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://jcs_user:jcs_password@postgres:5432/jcs_db
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
+      - HTTP_PROXY=http://10.32.194.128:3128
+      - HTTPS_PROXY=http://10.32.194.128:3128
+      - NO_PROXY=localhost,127.0.0.1,postgres,redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker_tier2:
+    build: .
+    container_name: jcs-worker-t2
+    command: python3 -m celery -A app.workers.celery_app worker -Q tier2 --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://jcs_user:jcs_password@postgres:5432/jcs_db
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
+      - HTTP_PROXY=http://10.32.194.128:3128
+      - HTTPS_PROXY=http://10.32.194.128:3128
+      - NO_PROXY=localhost,127.0.0.1,postgres,redis
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  worker_tier3:
+    build: .
+    container_name: jcs-worker-t3
+    command: python3 -m celery -A app.workers.celery_app worker -Q tier3 --loglevel=info
+    volumes:
+      - .:/app
+    environment:
+      - DATABASE_URL=postgresql://jcs_user:jcs_password@postgres:5432/jcs_db
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONPATH=/app
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

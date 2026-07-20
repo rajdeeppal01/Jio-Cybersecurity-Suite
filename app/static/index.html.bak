@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetraAI - Threat Intelligence Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+    <header class="navbar">
+        <div class="logo-container">
+            <div class="logo-glow"></div>
+            <i data-lucide="shield-alert" class="logo-icon"></i>
+            <span class="logo-text">NETRA<span class="accent-text">AI</span></span>
+            <span class="badge">SEC-OPS v2.0</span>
+        </div>
+        <div class="status-indicator">
+            <span class="status-pulse"></span>
+            <span class="status-label">CLUSTER ONLINE</span>
+        </div>
+    </header>
+
+    <main class="dashboard-grid">
+        <section class="panel panel-left">
+            <div class="panel-header">
+                <i data-lucide="terminal"></i>
+                <h2>Campaign Orchestrator</h2>
+            </div>
+            
+            <div class="form-container">
+                <p class="section-desc">Initiate automated host discovery and service triage campaigns.</p>
+                <form id="scan-form">
+                    <div class="input-group">
+                        <label for="target-input">Target Range / Hostname</label>
+                        <div class="input-wrapper">
+                            <i data-lucide="globe" class="input-icon"></i>
+                            <input type="text" id="target-input" placeholder="e.g., google.com or 192.168.1.0/24" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn-submit" id="btn-scan">
+                        <span>LAUNCH CAMPAIGN</span>
+                        <i data-lucide="play-circle"></i>
+                    </button>
+                </form>
+            </div>
+
+            <div class="campaign-history-container">
+                <div class="panel-subheader">
+                    <h3>Recent Campaigns</h3>
+                    <button id="btn-refresh" class="btn-icon-only"><i data-lucide="rotate-cw"></i></button>
+                </div>
+                <div id="campaign-list" class="scrollable-list">
+                    <div class="loading-placeholder">Loading campaigns...</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="panel panel-right">
+            <div class="sub-panel visualizer-panel">
+                <div class="panel-header">
+                    <i data-lucide="git-branch"></i>
+                    <h2>Active Network Topology Map</h2>
+                </div>
+                <div class="canvas-container" id="canvas-container">
+                    <div class="canvas-legend">
+                        <span class="legend-item"><span class="dot dot-gateway"></span> Gateway</span>
+                        <span class="legend-item"><span class="dot dot-host"></span> Node</span>
+                    </div>
+                    <canvas id="topology-canvas"></canvas>
+                    <div class="no-selection-overlay" id="no-selection-overlay">
+                        <i data-lucide="mouse-pointer-click"></i>
+                        <p>Select a completed campaign from the left panel to load topology map</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="sub-panel report-panel">
+                <div class="panel-header">
+                    <i data-lucide="cpu"></i>
+                    <h2>AI Threat Narrative & Remediation Report</h2>
+                    <button id="btn-generate-report" class="btn-submit btn-accent hide">
+                        <span>Run AI Analysis</span>
+                        <i data-lucide="wand-2"></i>
+                    </button>
+                </div>
+                <div class="report-content" id="report-view">
+                    <div class="report-placeholder">
+                        <i data-lucide="file-text"></i>
+                        <p>Narrative threat logs will appear once AI reasoning is triggered.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

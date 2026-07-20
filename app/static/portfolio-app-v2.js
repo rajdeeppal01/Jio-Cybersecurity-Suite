@@ -1,0 +1,1774 @@
+// NetraAI Frontend Core Operations Logic - Secured with JWT Auth
+
+const API_BASE = "";
+let activeCampaignId = null;
+let graphAnimationId = null;
+let authToken = "dummy_token_bypassed_auth";
+let activeReportData = null; // Cache for download/export
+
+// Graph Visualization Properties
+let nodes = [];
+let edges = [];
+let dragNode = null;
+let canvas, ctx;
+
+// ─── Authenticated Fetch Wrapper ─────────────────────────────────────────────
+async function authFetch(url, options = {}) {
+    const headers = {
+        ...options.headers,
+        "Authorization": `Bearer ${authToken}`
+    };
+    const res = await fetch(url, { ...options, headers });
+    return res;
+}
+
+// ─── Login / Logout ──────────────────────────────────────────────────────────
+function showLogin() {
+    // Removed
+}
+
+function hideLogin() {
+    // Removed
+}
+
+async function handleLoginSubmit(e) {
+    e.preventDefault();
+    const username = document.getElementById("login-username").value;
+    const password = document.getElementById("login-password").value;
+    const errorEl = document.getElementById("login-error");
+    const btn = document.getElementById("btn-login");
+
+    btn.disabled = true;
+    btn.innerHTML = `<span>AUTHENTICATING...</span>`;
+    errorEl.classList.add("hide");
+
+    try {
+        const formData = new FormData();
+        formData.append("username", username);
+        formData.append("password", password);
+
+        const res = await fetch(`${API_BASE}/auth/token`, {
+            method: "POST",
+            body: formData
+        });
+
+        if (!res.ok) {
+            errorEl.classList.remove("hide");
+            return;
+        }
+
+        const data = await res.json();
+        authToken = data.access_token;
+        sessionStorage.setItem("netraai_token", authToken);
+        hideLogin();
+        loadCampaigns();
+
+    } catch (err) {
+        errorEl.textContent = "Connection error. Please try again.";
+        errorEl.classList.remove("hide");
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>AUTHENTICATE</span> <i data-lucide="log-in"></i>`;
+        lucide.createIcons();
+    }
+}
+
+function logout() {
+    authToken = null;
+    sessionStorage.removeItem("netraai_token");
+    showLogin();
+    document.getElementById("campaign-list").innerHTML = `<div class="loading-placeholder">Loading campaigns...</div>`;
+    document.getElementById("report-view").innerHTML = `<div class="report-placeholder"><p>Narrative threat logs will appear once AI reasoning is triggered.</p></div>`;
+    document.getElementById("no-selection-overlay").classList.remove("hide");
+}
+
+
+
+document.addEventListener("DOMContentLoaded", () => {
+    // Initialize Lucide Icons (moved from inline script to satisfy CSP)
+    if (window.lucide) {
+        try {
+            lucide.createIcons();
+        } catch (e) {
+            console.error("Failed to initialize Lucide icons:", e);
+        }
+    }
+
+    canvas = document.getElementById("topology-canvas");
+    if (canvas) {
+        ctx = canvas.getContext("2d");
+        canvas.addEventListener("mousedown", handleMouseDown);
+        canvas.addEventListener("mousemove", handleMouseMove);
+        canvas.addEventListener("mouseup", handleMouseUp);
+    }
+    
+    // Helper to bind event listener safely
+    const safeBind = (id, event, fn) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener(event, fn);
+        } else {
+            console.warn(`Element with ID '${id}' not found for event binding.`);
+        }
+    };
+
+    // Auth event listeners
+    safeBind("login-form", "submit", handleLoginSubmit);
+    safeBind("btn-logout", "click", logout);
+    
+    // Dashboard event listeners
+    safeBind("scan-form", "submit", handleScanSubmit);
+    safeBind("btn-refresh", "click", loadCampaigns);
+    safeBind("btn-generate-report", "click", triggerAIReport);
+    safeBind("btn-download-report", "click", downloadReport);
+    safeBind("btn-export-json", "click", exportCampaign);
+    safeBind("btn-export-excel", "click", exportCampaignExcel);
+    
+    // JCS1 Pentest Dashboard event listeners
+    safeBind("pentest-form", "submit", handlePentestSubmit);
+    safeBind("btn-refresh-pentest", "click", loadPentests);
+    safeBind("btn-new-pentest", "click", resetPentestUI);
+    safeBind("terminal-input", "keydown", handleTerminalInput);
+    safeBind("tab-creds", "click", () => switchLootTab("creds"));
+    safeBind("tab-flags", "click", () => switchLootTab("flags"));
+    safeBind("tab-sysinfo", "click", () => switchLootTab("sysinfo"));
+    safeBind("btn-back-to-hub", "click", showSelector);
+    safeBind("btn-approve-action", "click", () => handlePermissionResponse("approve"));
+    safeBind("btn-deny-action", "click", () => handlePermissionResponse("deny"));
+
+    // Product Selector Hub Bindings (Click & Hover Glow Effects to bypass CSP)
+    const cardCve = document.querySelector(".card-cve");
+    const cardPentest = document.querySelector(".card-pentest");
+    
+    if (cardCve) {
+        cardCve.addEventListener("click", () => switchProduct("cve"));
+        cardCve.addEventListener("mouseenter", () => {
+            document.body.classList.add("hover-cve");
+        });
+        cardCve.addEventListener("mouseleave", () => {
+            document.body.classList.remove("hover-cve");
+        });
+    }
+    
+    if (cardPentest) {
+        cardPentest.addEventListener("click", () => switchProduct("pentest"));
+        cardPentest.addEventListener("mouseenter", () => {
+            document.body.classList.add("hover-pentest");
+        });
+        cardPentest.addEventListener("mouseleave", () => {
+            document.body.classList.remove("hover-pentest");
+        });
+    }
+    
+    const cardMalware = document.querySelector(".card-malware");
+    if (cardMalware) {
+        cardMalware.addEventListener("click", () => switchProduct("malware"));
+        cardMalware.addEventListener("mouseenter", () => {
+            document.body.classList.add("hover-malware");
+        });
+        cardMalware.addEventListener("mouseleave", () => {
+            document.body.classList.remove("hover-malware");
+        });
+    }
+
+    // 3D Parallax Tilt & Flashlight Glow Effect for Selector Cards
+    document.querySelectorAll(".selector-card").forEach(card => {
+        card.addEventListener("mousemove", (e) => {
+            const rect = card.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+            
+            const rotateX = ((centerY - y) / centerY) * 8;
+            const rotateY = ((x - centerX) / centerX) * 8;
+            
+            card.style.transform = `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) translateY(-8px) scale(1.02)`;
+            
+            const glow = card.querySelector(".card-glow");
+            if (glow) {
+                glow.style.opacity = "1";
+                glow.style.background = `radial-gradient(circle at ${x}px ${y}px, rgba(255, 255, 255, 0.08) 0%, transparent 70%)`;
+            }
+        });
+        
+        card.addEventListener("mouseleave", () => {
+            card.style.transform = "perspective(1000px) rotateX(0deg) rotateY(0deg) translateY(0px) scale(1)";
+            const glow = card.querySelector(".card-glow");
+            if (glow) {
+                glow.style.opacity = "0";
+            }
+        });
+    });
+    
+    window.addEventListener("resize", resizeCanvas);
+    
+    // Show login or load dashboard (Bypassed for local testing)
+    hideLogin();
+    
+    // Bind click listener on logo to go back to the hub
+    const logo = document.querySelector(".logo-container");
+    if (logo) {
+        logo.style.cursor = "pointer";
+        logo.addEventListener("click", showSelector);
+    }
+    
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('reset')) {
+        localStorage.setItem("activeView", "hub");
+    }
+
+    const savedView = localStorage.getItem("activeView");
+    if (savedView === "jcs0") {
+        switchProduct("cve");
+    } else if (savedView === "jcs1") {
+        switchProduct("pentest");
+    } else if (savedView === "jcs2") {
+        switchProduct("malware");
+    } else {
+        showSelector();
+    }
+});
+
+// Resize visualizer canvas
+function resizeCanvas() {
+    if (!canvas) return;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+}
+
+// Fetch campaigns list
+async function loadCampaigns() {
+    const listEl = document.getElementById("campaign-list");
+    try {
+        const response = await authFetch(`${API_BASE}/api/v1/campaigns`);
+        if (!response.ok) throw new Error("Failed to fetch campaigns");
+        const campaigns = await response.json();
+        
+        listEl.innerHTML = "";
+        
+        if (campaigns.length === 0) {
+            listEl.innerHTML = `<div class="loading-placeholder">No campaigns found. Start one above!</div>`;
+            return;
+        }
+        
+        campaigns.forEach(c => {
+            const card = document.createElement("div");
+            card.className = `campaign-card ${activeCampaignId === c.id ? "active" : ""}`;
+            card.dataset.id = c.id;
+            
+            const isCompleted = c.status === "COMPLETED";
+            const statusClass = isCompleted ? "status-completed" : "status-pending";
+            
+            card.innerHTML = `
+                <div class="card-header">
+                    <span class="card-target">${c.target}</span>
+                    <span class="card-status ${statusClass}">${c.status}</span>
+                </div>
+                <div class="card-details">
+                    <span>ID: ${c.id.substring(0, 8)}...</span>
+                    <span>${new Date(c.created_at).toLocaleTimeString()}</span>
+                </div>
+            `;
+            
+            card.addEventListener("click", () => selectCampaign(c.id));
+            listEl.appendChild(card);
+        });
+        
+    } catch (err) {
+        listEl.innerHTML = `<div class="loading-placeholder" style="color: var(--accent-red)">Error loading history.</div>`;
+    }
+}
+
+// Submit campaign form
+async function handleScanSubmit(e) {
+    e.preventDefault();
+    const input = document.getElementById("target-input");
+    const btn = document.getElementById("btn-scan");
+    const target = input.value.trim();
+    if (!target) return;
+    
+    btn.disabled = true;
+    btn.innerHTML = `<span>LAUNCHING...</span> <span class="status-pulse"></span>`;
+    
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/campaigns?target=${encodeURIComponent(target)}`, {
+            method: "POST"
+        });
+        if (!res.ok) throw new Error("Trigger failed");
+        const data = await res.json();
+        
+        input.value = "";
+        activeCampaignId = data.campaign_id;
+        
+        await loadCampaigns();
+        pollCampaignStatus(data.campaign_id);
+    } catch (err) {
+        alert("Error launching campaign: " + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>LAUNCH CAMPAIGN</span> <i data-lucide="play-circle"></i>`;
+        lucide.createIcons();
+    }
+}
+
+// Poll campaign status until completed
+function pollCampaignStatus(campaignId) {
+    const interval = setInterval(async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/v1/campaigns/${campaignId}`);
+            if (!res.ok) { clearInterval(interval); return; }
+            const data = await res.json();
+            loadCampaigns();
+
+            if (data.status === "ASSESSING") {
+                // Update overlay to show CVE assessment is in progress
+                const overlay = document.getElementById("no-selection-overlay");
+                if (!overlay.classList.contains("hide")) {
+                    overlay.innerHTML = `
+                        <div class="status-pulse" style="width: 24px; height: 24px; background-color: #a78bfa; box-shadow: 0 0 15px #a78bfa"></div>
+                        <p style="margin-top: 1rem; color: #a78bfa;">CVE Assessment running — querying NVD vulnerability database...</p>
+                    `;
+                }
+            } else if (data.status === "COMPLETED") {
+                clearInterval(interval);
+                selectCampaign(campaignId);
+            }
+        } catch (err) {
+            clearInterval(interval);
+        }
+    }, 2000);
+}
+
+// Select a campaign and load its assets
+async function selectCampaign(campaignId) {
+    activeCampaignId = campaignId;
+    
+    // Highlight active card
+    document.querySelectorAll(".campaign-card").forEach(el => {
+        el.classList.toggle("active", el.dataset.id === campaignId);
+    });
+    
+    const reportView = document.getElementById("report-view");
+    const reportBtn = document.getElementById("btn-generate-report");
+    
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/campaigns/${campaignId}`);
+        const campaign = await res.json();
+        
+        if (campaign.status !== "COMPLETED") {
+            document.getElementById("no-selection-overlay").classList.remove("hide");
+            document.getElementById("no-selection-overlay").innerHTML = `
+                <div class="status-pulse" style="width: 24px; height: 24px; background-color: var(--accent-orange); box-shadow: 0 0 15px var(--accent-orange)"></div>
+                <p style="margin-top: 1rem;">Discovery tasks running in Celery worker tiers...</p>
+            `;
+            reportView.innerHTML = `<div class="report-placeholder"><i data-lucide="loader"></i><p>Waiting for discovery phase to finalize...</p></div>`;
+            reportBtn.classList.add("hide");
+            lucide.createIcons();
+            return;
+        }
+        
+        document.getElementById("no-selection-overlay").classList.add("hide");
+        resizeCanvas();
+        
+        const repRes = await authFetch(`${API_BASE}/api/v1/campaigns/${campaignId}/report`);
+        if (repRes.ok) {
+            const reportData = await repRes.json();
+            renderReport(reportData);
+            reportBtn.classList.add("hide");
+        } else {
+            reportView.innerHTML = `<div class="report-placeholder"><i data-lucide="cpu"></i><p>Asset scanning complete. Generating AI threat narrative...</p></div>`;
+            reportBtn.classList.remove("hide");
+            nodes = buildBasicNodes(campaign);
+            edges = buildBasicEdges(nodes);
+            startGraphPhysics();
+            triggerAIReport();
+        }
+        
+    } catch (err) {
+        reportView.innerHTML = `<p style="color: var(--accent-red)">Error loading details.</p>`;
+    }
+}
+
+// Generate the AI narrative report
+async function triggerAIReport() {
+    if (!activeCampaignId) return;
+    const btn = document.getElementById("btn-generate-report");
+    btn.disabled = true;
+    btn.innerHTML = `<span>AI Reasoning...</span> <span class="status-pulse"></span>`;
+    
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/campaigns/${activeCampaignId}/report`, { method: "POST" });
+        if (!res.ok) throw new Error("AI analysis failed to start");
+        
+        // Poll for the report to be generated by the background worker
+        let reportData = null;
+        for (let i = 0; i < 30; i++) { // Poll for up to 60 seconds
+            await new Promise(r => setTimeout(r, 2000));
+            const repRes = await authFetch(`${API_BASE}/api/v1/campaigns/${activeCampaignId}/report`);
+            if (repRes.ok) {
+                reportData = await repRes.json();
+                break;
+            }
+        }
+        
+        if (!reportData) {
+            throw new Error("Report generation timed out.");
+        }
+        
+        renderReport(reportData);
+        btn.classList.add("hide");
+    } catch (err) {
+        alert("Error executing AI engine: " + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>Run AI Analysis</span> <i data-lucide="wand-2"></i>`;
+        lucide.createIcons();
+    }
+}
+
+// Build node coordinates and labels for drawing
+function buildBasicNodes(campaign) {
+    const generated = [];
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // Gateway Node
+    generated.push({
+        id: "192.168.1.1",
+        label: "Local Gateway",
+        type: "network_infrastructure",
+        x: width / 2,
+        y: height / 2,
+        vx: 0,
+        vy: 0,
+        radius: 20
+    });
+    
+    // Discovered Host Nodes
+    const uniqueIps = [...new Set(campaign.assets.map(a => a.ip_address))];
+    uniqueIps.forEach((ip, idx) => {
+        const angle = (idx / uniqueIps.length) * Math.PI * 2;
+        const radius = 120;
+        
+        const hostAsset = campaign.assets.find(a => a.ip_address === ip);
+        const ports = campaign.assets.filter(a => a.ip_address === ip && a.port !== 0).map(a => ({
+            number: a.port,
+            service: a.service,
+            cve_count: Array.isArray(a.vulnerabilities) ? a.vulnerabilities.length : 0
+        }));
+        
+        generated.push({
+            id: ip,
+            label: hostAsset.hostname || ip,
+            type: "host",
+            ports: ports,
+            x: (width / 2) + Math.cos(angle) * radius,
+            y: (height / 2) + Math.sin(angle) * radius,
+            vx: 0,
+            vy: 0,
+            radius: 14
+        });
+    });
+    
+    return generated;
+}
+
+function buildBasicEdges(nodesList) {
+    const generated = [];
+    const gateway = nodesList.find(n => n.type === "network_infrastructure");
+    if (!gateway) return [];
+    
+    nodesList.forEach(n => {
+        if (n.id !== gateway.id) {
+            generated.push({
+                source: gateway.id,
+                target: n.id,
+                packetOffset: Math.random() // used for animating moving dots
+            });
+        }
+    });
+    return generated;
+}
+
+// Render report narrative and graph topology
+function renderReport(reportData) {
+    const reportView = document.getElementById("report-view");
+    activeReportData = reportData; // Cache for download/export
+    
+    // Render Markdown narrative to basic HTML
+    reportView.innerHTML = parseMarkdown(reportData.narrative);
+    
+    // Build and animate topology graph
+    const width = canvas.width;
+    const height = canvas.height;
+    
+    // Construct nodes from response
+    let topoNodes = [];
+    if (reportData && reportData.topology_data && reportData.topology_data.nodes) {
+        topoNodes = reportData.topology_data.nodes;
+    } else if (reportData && reportData.status) {
+        // We received the async placeholder response instead of the final report
+        console.warn("Received report generation placeholder instead of full report", reportData);
+        return; // Don't crash, just wait for polling
+    } else {
+        console.warn("Report topology missing or malformed", reportData);
+    }
+    
+    nodes = topoNodes.map((node, idx) => {
+        const angle = (idx / topoNodes.length) * Math.PI * 2;
+        const isGateway = node.type === "network_infrastructure";
+        const dist = isGateway ? 0 : 120;
+        
+        return {
+            ...node,
+            x: (width / 2) + Math.cos(angle) * dist,
+            y: (height / 2) + Math.sin(angle) * dist,
+            vx: 0,
+            vy: 0,
+            radius: isGateway ? 20 : 14
+        };
+    });
+    
+    // Construct edges from response
+    let rawEdges = [];
+    if (reportData && reportData.topology_data) {
+        rawEdges = reportData.topology_data.edges || reportData.topology_data.links || [];
+    }
+    
+    edges = rawEdges.map(e => ({
+        ...e,
+        packetOffset: Math.random()
+    }));
+    
+    startGraphPhysics();
+}
+
+// Physics Loop for graph visualizer
+function startGraphPhysics() {
+    if (graphAnimationId) {
+        cancelAnimationFrame(graphAnimationId);
+    }
+    
+    function tick() {
+        updatePhysics();
+        drawGraph();
+        graphAnimationId = requestAnimationFrame(tick);
+    }
+    tick();
+}
+
+function updatePhysics() {
+    const width = canvas.width;
+    const height = canvas.height;
+    const k = 0.05; // Spring force constant
+    const repel = 800; // Repelling force constant
+    const centerForce = 0.01;
+    
+    // Node repelling forces (each node repels others)
+    for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+            const dx = nodes[j].x - nodes[i].x;
+            const dy = nodes[j].y - nodes[i].y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            
+            if (dist < 200) {
+                const force = repel / (dist * dist);
+                const fx = (dx / dist) * force;
+                const fy = (dy / dist) * force;
+                
+                if (nodes[i] !== dragNode) {
+                    nodes[i].vx -= fx;
+                    nodes[i].vy -= fy;
+                }
+                if (nodes[j] !== dragNode) {
+                    nodes[j].vx += fx;
+                    nodes[j].vy += fy;
+                }
+            }
+        }
+    }
+    
+    // Edge spring forces (pull linked nodes together)
+    edges.forEach(edge => {
+        const srcNode = nodes.find(n => n.id === edge.source);
+        const tgtNode = nodes.find(n => n.id === edge.target);
+        if (!srcNode || !tgtNode) return;
+        
+        const dx = tgtNode.x - srcNode.x;
+        const dy = tgtNode.y - srcNode.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const targetDist = 120;
+        
+        const force = (dist - targetDist) * k;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        
+        if (srcNode !== dragNode) {
+            srcNode.vx += fx;
+            srcNode.vy += fy;
+        }
+        if (tgtNode !== dragNode) {
+            tgtNode.vx -= fx;
+            tgtNode.vy -= fy;
+        }
+    });
+    
+    // Center gravity & updating positions
+    nodes.forEach(n => {
+        if (n === dragNode) return;
+        
+        // Pull to center
+        n.vx += (width / 2 - n.x) * centerForce;
+        n.vy += (height / 2 - n.y) * centerForce;
+        
+        n.x += n.vx;
+        n.y += n.vy;
+        
+        // Dampening/friction
+        n.vx *= 0.8;
+        n.vy *= 0.8;
+        
+        // Keep within bounds
+        n.x = Math.max(n.radius, Math.min(width - n.radius, n.x));
+        n.y = Math.max(n.radius, Math.min(height - n.radius, n.y));
+    });
+    
+    // Animate network packet offsets
+    edges.forEach(e => {
+        e.packetOffset = (e.packetOffset + 0.005) % 1;
+    });
+}
+
+function drawGraph() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 1. Draw connecting routes (edges)
+    edges.forEach(edge => {
+        const srcNode = nodes.find(n => n.id === edge.source);
+        const tgtNode = nodes.find(n => n.id === edge.target);
+        if (!srcNode || !tgtNode) return;
+        
+        // Draw edge line
+        ctx.strokeStyle = "rgba(0, 240, 255, 0.25)";
+        ctx.lineWidth = 2;
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.moveTo(srcNode.x, srcNode.y);
+        ctx.lineTo(tgtNode.x, tgtNode.y);
+        ctx.stroke();
+        
+        // Draw moving packet dot
+        const px = srcNode.x + (tgtNode.x - srcNode.x) * edge.packetOffset;
+        const py = srcNode.y + (tgtNode.y - srcNode.y) * edge.packetOffset;
+        ctx.fillStyle = "var(--accent-blue)";
+        ctx.shadowColor = "var(--accent-blue)";
+        ctx.shadowBlur = 8;
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    
+    // 2. Draw nodes
+    nodes.forEach(n => {
+        const isGateway = n.type === "network_infrastructure";
+        const primaryColor = isGateway ? "#00f0ff" : "#00ff66";
+        const shadowColor = isGateway ? "rgba(0, 240, 255, 0.4)" : "rgba(0, 255, 102, 0.3)";
+        
+        // Glow effect
+        ctx.shadowBlur = 12;
+        ctx.shadowColor = shadowColor;
+        
+        // Outer glowing ring
+        ctx.strokeStyle = primaryColor;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.radius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        // Inner circle
+        ctx.fillStyle = "rgba(10, 15, 26, 0.9)";
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Center core
+        ctx.fillStyle = primaryColor;
+        ctx.beginPath();
+        ctx.arc(n.x, n.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        
+        // Text labels
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 11px 'Outfit'";
+        ctx.textAlign = "center";
+        ctx.fillText(n.label, n.x, n.y + n.radius + 20);
+        
+        // IP Subtitle
+        ctx.fillStyle = "var(--text-muted)";
+        ctx.font = "9px 'JetBrains Mono'";
+        ctx.fillText(n.id, n.x, n.y + n.radius + 32);
+        
+        // Open ports counts bubble
+        if (!isGateway && n.ports && n.ports.length > 0) {
+            ctx.fillStyle = "var(--accent-orange)";
+            ctx.font = "bold 9px 'JetBrains Mono'";
+            ctx.fillText(`[${n.ports.length} open]`, n.x, n.y - n.radius - 8);
+        }
+
+        // CVE badge — show count of vulnerabilities found across all ports of this node
+        const cveCount = (n.ports || []).reduce((sum, p) => sum + (p.cve_count || 0), 0);
+        if (!isGateway && cveCount > 0) {
+            // Red badge
+            ctx.beginPath();
+            ctx.arc(n.x + n.radius, n.y - n.radius, 9, 0, Math.PI * 2);
+            ctx.fillStyle = "#ef4444";
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.font = "bold 8px 'JetBrains Mono'";
+            ctx.textAlign = "center";
+            ctx.fillText(cveCount > 9 ? "9+" : String(cveCount), n.x + n.radius, n.y - n.radius + 3);
+        }
+    });
+}
+
+// Mouse dragging controls for interactive map
+function handleMouseDown(e) {
+    const rect = canvas.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+    
+    dragNode = nodes.find(n => {
+        const dx = n.x - mouseX;
+        const dy = n.y - mouseY;
+        return Math.sqrt(dx * dx + dy * dy) < n.radius + 15;
+    });
+}
+
+function handleMouseMove(e) {
+    if (!dragNode) return;
+    const rect = canvas.getBoundingClientRect();
+    dragNode.x = e.clientX - rect.left;
+    dragNode.y = e.clientY - rect.top;
+}
+
+function handleMouseUp() {
+    dragNode = null;
+}
+
+// Helper to split table cells by pipes, tabs, or multiple spaces
+function splitTableRow(line) {
+    let trimmed = line.trim();
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+        return trimmed.split("|").slice(1, -1).map(c => c.trim());
+    }
+    if (trimmed.includes("\t")) {
+        return trimmed.split("\t").map(c => c.trim()).filter(c => c !== "");
+    }
+    if (/\s{2,}/.test(trimmed)) {
+        return trimmed.split(/\s{2,}/).map(c => c.trim()).filter(c => c !== "");
+    }
+    return [trimmed];
+}
+
+// Helper to style cell contents with clean badges instead of emojis
+function styleCellContent(text) {
+    let clean = text.trim().replace(/^[*_\s`]+|[*_\s`]+$/g, ""); // strip markdown emphasis in cell headers/keys
+    if (clean === "FAIL") return '<span class="comp-fail">FAIL</span>';
+    if (clean === "PASS") return '<span class="comp-pass">PASS</span>';
+    if (clean === "REVIEW") return '<span class="comp-review">REVIEW</span>';
+    if (clean === "N/A") return '<span class="comp-na">N/A</span>';
+    
+    if (clean === "CRITICAL") return '<span class="sev-critical">CRITICAL</span>';
+    if (clean === "HIGH") return '<span class="sev-high">HIGH</span>';
+    if (clean === "MEDIUM") return '<span class="sev-medium">MEDIUM</span>';
+    if (clean === "LOW") return '<span class="sev-low">LOW</span>';
+    if (clean === "INFO" || clean === "INFORMATIONAL") return '<span class="sev-info">INFO</span>';
+    
+    return inlineMarkdown(text);
+}
+
+// Helper to render table rows into HTML
+function renderTableHTML(rows) {
+    let tableHtml = '<div class="report-table-wrap"><table class="report-table">';
+    let hasHeader = false;
+
+    rows.forEach((row) => {
+        let cleanRow = row.trim();
+        // Skip separator rows like |---|---|
+        if (/^\|[\s\-|:|#]+\|$/.test(cleanRow)) {
+            return;
+        }
+
+        let cells = splitTableRow(cleanRow);
+        if (cells.length <= 1 && cells[0] === "") return;
+        
+        if (!hasHeader) {
+            tableHtml += "<thead><tr>";
+            cells.forEach(cell => {
+                tableHtml += `<th>${styleCellContent(cell)}</th>`;
+            });
+            tableHtml += "</tr></thead><tbody>";
+            hasHeader = true;
+        } else {
+            tableHtml += "<tr>";
+            cells.forEach(cell => {
+                tableHtml += `<td>${styleCellContent(cell)}</td>`;
+            });
+            tableHtml += "</tr>";
+        }
+    });
+
+    tableHtml += "</tbody></table></div>";
+    return tableHtml;
+}
+
+// Check if a line should be treated as a table row
+function isTableLine(line) {
+    let trimmed = line.trim();
+    if (trimmed === "" || trimmed === "---") return false;
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) return true;
+    if (trimmed.includes("\t")) return true;
+    if (/\S+\s{2,}\S+/.test(trimmed)) {
+        // Exclude lists, headers, horizontal lines
+        if (trimmed.startsWith("#") || trimmed.startsWith("-") || trimmed.startsWith("*") || /^\d+\./.test(trimmed)) {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+// Inline formatting helper
+function inlineMarkdown(text) {
+    if (!text) return "";
+    let html = text;
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+    // Italic
+    html = html.replace(/\*(.*?)\*/g, "<em>$1</em>");
+    // Inline code
+    html = html.replace(/`(.*?)`/g, "<code>$1</code>");
+    return html;
+}
+
+// Markdown parser helper for narrative display
+function parseMarkdown(md) {
+    if (!md) return "";
+
+    // Strip HTML comments
+    let cleanMd = md.replace(/<!--[\s\S]*?-->/g, "");
+    
+    // Normalize newlines
+    const lines = cleanMd.split(/\r?\n/);
+    let html = "";
+    
+    let inTable = false;
+    let tableRows = [];
+    let inList = false;
+    let listType = ""; // "ul" or "ol"
+
+    for (let i = 0; i < lines.length; i++) {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        // 1. Handle Tables
+        if (isTableLine(line)) {
+            if (inList) {
+                html += `</${listType}>`;
+                inList = false;
+            }
+            inTable = true;
+            tableRows.push(line);
+            continue;
+        } else {
+            if (inTable) {
+                if (tableRows.length >= 1) {
+                    html += renderTableHTML(tableRows);
+                }
+                tableRows = [];
+                inTable = false;
+            }
+        }
+
+        // 2. Empty Lines
+        if (trimmed === "") {
+            if (inList) {
+                html += `</${listType}>`;
+                inList = false;
+            }
+            continue;
+        }
+
+        // 3. Horizontal Lines
+        if (trimmed === "---") {
+            if (inList) {
+                html += `</${listType}>`;
+                inList = false;
+            }
+            html += "<hr>";
+            continue;
+        }
+
+        // 4. Headers
+        if (trimmed.startsWith("#")) {
+            if (inList) {
+                html += `</${listType}>`;
+                inList = false;
+            }
+            let level = 0;
+            while (trimmed[level] === "#") {
+                level++;
+            }
+            let content = trimmed.substring(level).trim();
+            html += `<h${level}>${inlineMarkdown(content)}</h${level}>`;
+            continue;
+        }
+
+        // 5. Unordered List Items
+        const bulletMatch = trimmed.match(/^[-*]\s+(.*)$/);
+        if (bulletMatch) {
+            if (inList && listType !== "ul") {
+                html += `</${listType}>`;
+                inList = false;
+            }
+            if (!inList) {
+                html += "<ul>";
+                inList = true;
+                listType = "ul";
+            }
+            html += `<li>${inlineMarkdown(bulletMatch[1])}</li>`;
+            continue;
+        }
+
+        // 6. Ordered List Items
+        const numberMatch = trimmed.match(/^\d+\.\s+(.*)$/);
+        if (numberMatch) {
+            if (inList && listType !== "ol") {
+                html += `</${listType}>`;
+                inList = false;
+            }
+            if (!inList) {
+                html += "<ol>";
+                inList = true;
+                listType = "ol";
+            }
+            html += `<li>${inlineMarkdown(numberMatch[1])}</li>`;
+            continue;
+        }
+
+        // Close list if we hit normal text
+        if (inList) {
+            html += `</${listType}>`;
+            inList = false;
+        }
+
+        // 7. Normal Paragraph Text
+        html += `<p>${inlineMarkdown(trimmed)}</p>`;
+    }
+
+    // Flush any remaining tables or lists
+    if (inTable && tableRows.length >= 1) {
+        html += renderTableHTML(tableRows);
+    }
+    if (inList) {
+        html += `</${listType}>`;
+    }
+
+    return html;
+}
+
+
+// ─── Download Report as .txt file ────────────────────────────────────────────
+async function downloadReport() {
+    if (!activeCampaignId) return;
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/campaigns/${activeCampaignId}/report/download`);
+        if (!res.ok) {
+            const errText = await res.text();
+            let msg = "Report not found. Generate the AI report first.";
+            try {
+                const errJson = JSON.parse(errText);
+                if (errJson && errJson.detail) msg = errJson.detail;
+            } catch (e) {
+                if (errText) msg = errText;
+            }
+            throw new Error(msg);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `netraai_report_${activeCampaignId.slice(0, 8)}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert("Download failed: " + err.message);
+    }
+}
+
+// ─── Export full campaign as .json ───────────────────────────────────────────
+async function exportCampaign() {
+    if (!activeCampaignId) return;
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/campaigns/${activeCampaignId}/export`);
+        if (!res.ok) {
+            const errText = await res.text();
+            let msg = "Export failed.";
+            try {
+                const errJson = JSON.parse(errText);
+                if (errJson && errJson.detail) msg = errJson.detail;
+            } catch (e) {
+                if (errText) msg = errText;
+            }
+            throw new Error(msg);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `netraai_export_${activeCampaignId.slice(0, 8)}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert("Export failed: " + err.message);
+    }
+}
+
+// ─── Export campaign report as Excel ─────────────────────────────────────────
+async function exportCampaignExcel() {
+    if (!activeCampaignId) return;
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/campaigns/${activeCampaignId}/export/excel`);
+        if (!res.ok) {
+            const errText = await res.text();
+            let msg = "Excel export failed.";
+            try {
+                const errJson = JSON.parse(errText);
+                if (errJson && errJson.detail) msg = errJson.detail;
+            } catch (e) {
+                if (errText) msg = errText;
+            }
+            throw new Error(msg);
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `netraai_report_${activeCampaignId.slice(0, 8)}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    } catch (err) {
+        alert("Excel export failed: " + err.message);
+    }
+}
+
+
+// ─── NETRAAI Hub Routing & Switch Logic ─────────────────────────────────────
+let activePentestCampaignId = null;
+let activeLootTab = "creds";
+let pentestCampaignCache = null;
+let pentestPollInterval = null;
+
+function showSelector() {
+    localStorage.setItem("activeView", "hub");
+    document.getElementById("selector-container").style.display = "flex";
+    document.getElementById("cve-dashboard").style.display = "none";
+    document.getElementById("pentest-dashboard").style.display = "none";
+    document.getElementById("malware-dashboard").style.display = "none";
+    if (graphAnimationId) {
+        cancelAnimationFrame(graphAnimationId);
+        graphAnimationId = null;
+    }
+    if (pentestPollInterval) {
+        clearInterval(pentestPollInterval);
+        pentestPollInterval = null;
+    }
+}
+
+function resetPentestUI() {
+    activePentestCampaignId = null;
+    pentestCampaignCache = null;
+    if (pentestPollInterval) {
+        clearInterval(pentestPollInterval);
+        pentestPollInterval = null;
+    }
+    
+    // Reset active card classes in the list
+    document.querySelectorAll("#pentest-campaign-list .campaign-card").forEach(el => {
+        el.classList.remove("active");
+    });
+
+    // Reset chat
+    renderChatHistory([]);
+
+    // Reset console
+    const logView = document.getElementById("terminal-log-view");
+    if (logView) {
+        logView.textContent = "[*] Subsystem idle. Configure targets and type an AI prompt to execute exploit modules...";
+    }
+
+    // Reset console status indicator
+    const sessionPulse = document.getElementById("terminal-session-pulse");
+    const sessionStatus = document.getElementById("terminal-session-status");
+    const termInput = document.getElementById("terminal-input");
+    
+    if (sessionPulse) {
+        sessionPulse.style.backgroundColor = "#9ca3af";
+        sessionPulse.style.boxShadow = "none";
+    }
+    if (sessionStatus) {
+        sessionStatus.textContent = "OFFLINE";
+        sessionStatus.style.color = "#9ca3af";
+    }
+    if (termInput) {
+        termInput.disabled = true;
+        termInput.value = "";
+        termInput.placeholder = "pseudo-terminal disconnected. Establish shell...";
+    }
+
+    // Reset loot bin
+    const lootView = document.getElementById("loot-content-view");
+    if (lootView) {
+        lootView.innerHTML = `
+            <div class="loot-placeholder" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; opacity: 0.5; text-align: center; gap: 0.5rem; font-size: 0.8rem;">
+                <i data-lucide="database" style="width:28px;height:28px;opacity:0.6;"></i>
+                <p>Credentials, flags, and post-exploitation evidence will catalog here.</p>
+            </div>
+        `;
+    }
+    
+    // Clear prompt input
+    const promptInput = document.getElementById("pentest-prompt-input");
+    if (promptInput) {
+        promptInput.value = "";
+        promptInput.placeholder = "Type prompt (e.g., Scan 10.32.192.56 and ask before exploiting)...";
+    }
+
+    if (window.lucide) {
+        lucide.createIcons();
+    }
+}
+
+function switchProduct(product) {
+    document.getElementById("selector-container").style.display = "none";
+    
+    // Clean up background loops to prevent CPU spikes and resource leaks
+    if (graphAnimationId) {
+        cancelAnimationFrame(graphAnimationId);
+        graphAnimationId = null;
+    }
+    if (pentestPollInterval) {
+        clearInterval(pentestPollInterval);
+        pentestPollInterval = null;
+    }
+    
+    if (product === "cve") {
+        localStorage.setItem("activeView", "jcs0");
+        document.getElementById("cve-dashboard").style.display = "grid";
+        if (window.lucide) { lucide.createIcons(); }
+        document.getElementById("pentest-dashboard").style.display = "none";
+        document.getElementById("malware-dashboard").style.display = "none";
+        resizeCanvas();
+        loadCampaigns();
+    } else if (product === "pentest") {
+        localStorage.setItem("activeView", "jcs1");
+        document.getElementById("cve-dashboard").style.display = "none";
+        document.getElementById("pentest-dashboard").style.display = "grid";
+        document.getElementById("malware-dashboard").style.display = "none";
+        if (window.lucide) { lucide.createIcons(); }
+        loadPentests();
+    } else if (product === "malware") {
+        localStorage.setItem("activeView", "jcs2");
+        document.getElementById("cve-dashboard").style.display = "none";
+        document.getElementById("pentest-dashboard").style.display = "none";
+        document.getElementById("malware-dashboard").style.display = "block";
+        const iframe = document.getElementById("malware-iframe");
+        if (iframe) {
+            iframe.src = window.location.protocol + "//" + window.location.hostname + ":8000/";
+        }
+        if (window.lucide) { lucide.createIcons(); }
+    }
+}
+
+// ─── JCS1 Pentest Operations ──────────────────────────────────────────────
+// ─── HTML Escaping and Chat Helpers ─────────────────────────────────────────
+function escapeHtml(unsafe) {
+    if (!unsafe) return "";
+    return unsafe
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+}
+
+async function handlePermissionResponse(action) {
+    if (!activePentestCampaignId) return;
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/pentest/${activePentestCampaignId}/respond`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: action })
+        });
+        if (res.ok) {
+            const modal = document.getElementById("pentest-permission-modal");
+            if (modal) modal.style.display = "none";
+            // Instantly poll to refresh state and close gate
+            await fetchAndUpdateSingle(activePentestCampaignId);
+        }
+    } catch (err) {
+        console.error("Failed to send authorization response:", err);
+    }
+}
+
+function appendLocalUserMessage(text) {
+    const chatContainer = document.getElementById("pentest-chat-container");
+    if (!chatContainer) return;
+    
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const msgEl = document.createElement("div");
+    msgEl.className = "chat-message user";
+    msgEl.innerHTML = `
+        <div class="message-sender">Operator</div>
+        <div class="message-text">${escapeHtml(text)}</div>
+        <div class="message-time">${timestamp}</div>
+    `;
+    chatContainer.appendChild(msgEl);
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+function renderChatHistory(chatHistory) {
+    const chatContainer = document.getElementById("pentest-chat-container");
+    if (!chatContainer) return;
+    
+    chatContainer.innerHTML = "";
+    if (!chatHistory || chatHistory.length === 0) {
+        chatContainer.innerHTML = `
+            <div class="chat-message agent">
+                <div class="message-sender">JCS1 Agent</div>
+                <div class="message-text">Awaiting target IP and execution instructions. Type a prompt below to launch a campaign!</div>
+                <div class="message-time">00:00:00</div>
+            </div>
+        `;
+        return;
+    }
+    
+    chatHistory.forEach(msg => {
+        const msgEl = document.createElement("div");
+        msgEl.className = `chat-message ${msg.role}`;
+        msgEl.innerHTML = `
+            <div class="message-sender">${msg.role === "agent" ? "JCS1 Agent" : "Operator"}</div>
+            <div class="message-text">${escapeHtml(msg.text)}</div>
+            <div class="message-time">${msg.timestamp || ""}</div>
+        `;
+        chatContainer.appendChild(msgEl);
+    });
+    chatContainer.scrollTop = chatContainer.scrollHeight;
+}
+
+async function fetchAndUpdateSingle(campaignId) {
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/pentest/${campaignId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        pentestCampaignCache = data;
+        
+        // Update console
+        const logView = document.getElementById("terminal-log-view");
+        if (logView) {
+            logView.textContent = data.console_log;
+            logView.scrollTop = logView.scrollHeight;
+        }
+        
+        // Update chat
+        renderChatHistory(data.chat_history);
+        
+        // Update permission modal
+        const modal = document.getElementById("pentest-permission-modal");
+        if (data.status === "WAITING_FOR_PERMISSION" && data.pending_action) {
+            if (modal) {
+                document.getElementById("permission-action-title").textContent = data.pending_action.name || "Active Exploit Module";
+                document.getElementById("permission-action-desc").textContent = data.pending_action.description || "";
+                modal.style.display = "flex";
+            }
+        } else {
+            if (modal) modal.style.display = "none";
+        }
+    } catch (err) {
+        console.error("fetchAndUpdateSingle error:", err);
+    }
+}
+
+// ─── JCS1 Pentest Operations ──────────────────────────────────────────────
+async function loadPentests() {
+    const listEl = document.getElementById("pentest-campaign-list");
+    try {
+        const response = await authFetch(`${API_BASE}/api/v1/pentest`);
+        if (!response.ok) throw new Error("Failed to fetch pentests");
+        const data = await response.json();
+        
+        listEl.innerHTML = "";
+        const campaigns = data.campaigns || data;
+        if (campaigns.length === 0) {
+            listEl.innerHTML = `<div class="loading-placeholder">No campaigns found. Start one above!</div>`;
+            return;
+        }
+        
+        campaigns.forEach(c => {
+            const card = document.createElement("div");
+            card.className = `campaign-card ${activePentestCampaignId === c.id ? "active" : ""}`;
+            card.dataset.id = c.id;
+            
+            const isCompleted = c.status === "COMPLETED";
+            const isFailed = c.status === "FAILED";
+            const statusClass = isCompleted ? "status-completed" : (isFailed ? "status-completed badge-red" : "status-pending");
+            
+            card.innerHTML = `
+                <div class="card-header">
+                    <span class="card-target" style="color:#ef4444;">${c.target}</span>
+                    <span class="card-status ${statusClass}">${c.status}</span>
+                </div>
+                <div class="card-details">
+                    <span>ID: ${c.id.substring(0, 8)}...</span>
+                    <span>${new Date(c.created_at).toLocaleTimeString()}</span>
+                </div>
+            `;
+            
+            card.addEventListener("click", () => selectPentest(c.id));
+            listEl.appendChild(card);
+        });
+    } catch (err) {
+    console.error("loadPentests failed:", err);
+
+        listEl.innerHTML = `
+        <div class="loading-placeholder" style="color:red">
+            ${err}
+        </div>`;
+    }
+}
+
+async function handlePentestSubmit(e) {
+    e.preventDefault();
+    const promptInput = document.getElementById("pentest-prompt-input");
+    const btn = document.getElementById("btn-launch-pentest");
+    
+    const prompt = promptInput.value.trim();
+    if (!prompt) return;
+
+    // Extract target dynamically from prompt
+    let target = "";
+    const ipMatch = prompt.match(/\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b/);
+    if (ipMatch) {
+        target = ipMatch[0];
+    } else if (prompt.toLowerCase().includes("localhost")) {
+        target = "127.0.0.1";
+    }
+
+    // If there is a campaign selected and it is running or completed, treat this as a chat message!
+    if (activePentestCampaignId && pentestCampaignCache && (pentestCampaignCache.status === "RUNNING" || pentestCampaignCache.status === "COMPLETED" || pentestCampaignCache.status === "WAITING_FOR_PERMISSION")) {
+        promptInput.value = "";
+        appendLocalUserMessage(prompt);
+        
+        try {
+            const res = await authFetch(`${API_BASE}/api/v1/pentest/${activePentestCampaignId}/respond`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message: prompt })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                renderChatHistory(data.chat_history);
+            }
+        } catch (err) {
+            console.error("Failed to send chat message:", err);
+        }
+        return;
+    }
+
+    // Otherwise, start a brand new AI-driven campaign!
+    if (!target) {
+        alert("Please specify a target IP address (e.g., 10.63.92.151 or 127.0.0.1) directly in your prompt to initiate a campaign!");
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = `<span class="status-pulse" style="background-color:#ef4444;box-shadow:0 0 10px #ef4444;"></span>`;
+    
+    try {
+        const res = await authFetch(`${API_BASE}/api/v1/pentest`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ target: target, prompt: prompt })
+        });
+        if (!res.ok) throw new Error("Launch failed");
+        const data = await res.json();
+        
+        promptInput.value = "";
+        activePentestCampaignId = data.id || data.campaign_id;
+        
+        await loadPentests();
+        selectPentest(data.id || data.campaign_id);
+    } catch (err) {
+        alert("Error launching AI campaign: " + err.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<i data-lucide="zap"></i>`;
+        lucide.createIcons();
+    }
+}
+
+async function selectPentest(campaignId) {
+    activePentestCampaignId = campaignId;
+    
+    document.querySelectorAll("#pentest-campaign-list .campaign-card").forEach(el => {
+        el.classList.toggle("active", el.dataset.id === campaignId);
+    });
+
+    if (pentestPollInterval) clearInterval(pentestPollInterval);
+    pollPentestStatus(campaignId);
+}
+
+function pollPentestStatus(campaignId) {
+    const fetchAndUpdate = async () => {
+        try {
+            const res = await authFetch(`${API_BASE}/api/v1/pentest/${campaignId}`);
+            if (!res.ok) { clearInterval(pentestPollInterval); return; }
+            const data = await res.json();
+            pentestCampaignCache = data;
+            
+            // Update console
+            const logView = document.getElementById("terminal-log-view");
+            if (logView) {
+                logView.textContent = data.console_log;
+                logView.scrollTop = logView.scrollHeight;
+            }
+            
+            // Update chat
+            renderChatHistory(data.chat_history);
+
+            const sessionPulse = document.getElementById("terminal-session-pulse");
+            const sessionStatus = document.getElementById("terminal-session-status");
+            const promptLabel = document.getElementById("terminal-prompt-label");
+            const termInput = document.getElementById("terminal-input");
+            const modal = document.getElementById("pentest-permission-modal");
+
+            // Handle permission modal state
+            if (data.status === "WAITING_FOR_PERMISSION" && data.pending_action) {
+                sessionPulse.style.backgroundColor = "#f59e0b";
+                sessionPulse.style.boxShadow = "0 0 8px #f59e0b";
+                sessionStatus.textContent = "AWAITING AUTH";
+                sessionStatus.style.color = "#f59e0b";
+                termInput.disabled = true;
+                termInput.placeholder = "Awaiting operator authorization for active exploit...";
+                
+                if (modal) {
+                    document.getElementById("permission-action-title").textContent = data.pending_action.name || "Active Exploit Module";
+                    document.getElementById("permission-action-desc").textContent = data.pending_action.description || "";
+                    modal.style.display = "flex";
+                }
+            } else {
+                if (modal) modal.style.display = "none";
+                
+                if (data.status === "RUNNING") {
+                    sessionPulse.style.backgroundColor = "#f59e0b";
+                    sessionPulse.style.boxShadow = "0 0 8px #f59e0b";
+                    sessionStatus.textContent = "ATTACK IN PROGRESS";
+                    sessionStatus.style.color = "#f59e0b";
+                    termInput.disabled = true;
+                    termInput.placeholder = "Exploits running. Grooming heap & scanning services...";
+                } else if (data.status === "COMPLETED") {
+                    clearInterval(pentestPollInterval);
+                    sessionPulse.style.backgroundColor = "#10b981";
+                    sessionPulse.style.boxShadow = "0 0 8px #10b981";
+                    sessionStatus.textContent = "SHELL ACTIVE";
+                    sessionStatus.style.color = "#10b981";
+                    
+                    termInput.disabled = false;
+                    termInput.placeholder = "Active reverse shell open. Type command (e.g., whoami, help) and press Enter...";
+                    promptLabel.textContent = "jcs1-exploit:~$";
+                    
+                    renderLoot(data.loot);
+                    loadPentests();
+                } else if (data.status === "FAILED") {
+                    clearInterval(pentestPollInterval);
+                    sessionPulse.style.backgroundColor = "#ef4444";
+                    sessionPulse.style.boxShadow = "0 0 8px #ef4444";
+                    sessionStatus.textContent = "FAILED";
+                    sessionStatus.style.color = "#ef4444";
+                    termInput.disabled = true;
+                    termInput.placeholder = "Attack pipeline aborted. No shell established.";
+                    loadPentests();
+                } else {
+                    sessionPulse.style.backgroundColor = "#9ca3af";
+                    sessionPulse.style.boxShadow = "none";
+                    sessionStatus.textContent = "QUEUED";
+                    sessionStatus.style.color = "#9ca3af";
+                    termInput.disabled = true;
+                    termInput.placeholder = "Waiting in task queue...";
+                }
+            }
+        } catch (err) {
+            clearInterval(pentestPollInterval);
+        }
+    };
+
+    fetchAndUpdate();
+    pentestPollInterval = setInterval(fetchAndUpdate, 1500);
+}
+
+// ─── Interactive Pseudo-Shell Command Interpreter ───────────────────────────
+function handleTerminalInput(e) {
+    if (e.key !== "Enter") return;
+    const input = document.getElementById("terminal-input");
+    const cmd = input.value.trim();
+    if (!cmd) return;
+    
+    const logView = document.getElementById("terminal-log-view");
+    
+    // Echo the typed command to the screen
+    logView.textContent += `\njcs1-exploit:~$ ${cmd}\n`;
+    input.value = "";
+    
+    if (cmd.toLowerCase() === "clear") {
+        logView.textContent = "jcs1-exploit:~$ ";
+        return;
+    }
+    
+    // Simulate typical network latency for a reverse shell
+    setTimeout(() => {
+        let response = "";
+        const parts = cmd.split(" ");
+        const baseCmd = parts[0].toLowerCase();
+        const arg = parts[1] || "";
+        
+        switch (baseCmd) {
+            case "help":
+            case "?":
+                response = `Available Tactical Shell Commands:
+  help             Display this command manual
+  whoami           Print the current active user identity
+  id               Print real and effective user and group IDs
+  uname -a         Print system kernel and OS specifications
+  ls               List directory contents
+  cat [file]       Concatenate and display file content
+  ifconfig         Print active network interfaces
+  clear            Clear the terminal screen`;
+                break;
+            case "whoami":
+                response = "root";
+                break;
+            case "id":
+                response = "uid=0(root) gid=0(root) groups=0(root)";
+                break;
+            case "uname":
+                response = "Linux node-10-32-192-56 5.15.0-88-generic #98-Ubuntu SMP Mon Oct 2 15:18:56 UTC 2023 x86_64 x86_64 x86_64 GNU/Linux";
+                break;
+            case "ifconfig":
+            case "ip":
+                response = `eth0: flags=4163<UP,BROADCAST,RUNNING,MULTICAST>  mtu 1500
+        inet 10.32.192.56  netmask 255.255.255.0  broadcast 10.32.192.255
+        inet6 fe80::5054:ff:fe8f:ba1c  prefixlen 64  scopeid 0x20<link>
+        ether 52:54:00:8f:ba:1c  txqueuelen 1000  (Ethernet)
+        RX packets 82390  bytes 92384112 (92.3 MB)
+        TX packets 51203  bytes 4829103 (4.8 MB)`;
+                break;
+            case "ls":
+                response = `total 28
+drwx------  4 root root 4096 Jun 24 06:22 .
+drwxr-xr-x 20 root root 4096 Jun 24 06:12 ..
+-rw-r--r--  1 root root 3106 Oct 15  2021 .bashrc
+drwxr-xr-x  3 root root 4096 Jun 24 06:18 .local
+-rw-r--r--  1 root root  161 Jul  9  2019 .profile
+-rw-r--r--  1 root root   51 Jun 24 06:21 root_flag.txt
+-rw-------  1 root root  820 Jun 24 06:22 .ssh_history`;
+                break;
+            case "cat":
+                if (!arg) {
+                    response = "cat: missing file operand";
+                } else if (arg.includes("root_flag.txt")) {
+                    response = "NETRA_PENTEST_FLAG{b1ue_k33p_3xp101t_succ3ss_89d3}";
+                } else if (arg.includes("shadow")) {
+                    response = `root:$6$v19a$X8K7z/vU8N5bWw7:19720:0:99999:7:::
+daemon:*:19053:0:99999:7:::
+bin:*:19053:0:99999:7:::
+sys:*:19053:0:99999:7:::
+sync:*:19053:0:99999:7:::
+nobody:*:19053:0:99999:7:::`;
+                } else if (arg.includes("passwd")) {
+                    response = `root:x:0:0:root:/root:/bin/bash
+daemon:x:1:1:daemon:/usr/sbin:/usr/sbin/nologin
+bin:x:2:2:bin:/bin:/usr/sbin/nologin
+sys:x:3:3:sys:/dev:/usr/sbin/nologin
+sync:x:4:65534:sync:/bin:/bin/sync
+nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin`;
+                } else {
+                    response = `cat: ${arg}: No such file or directory`;
+                }
+                break;
+            default:
+                response = `sh: 1: ${baseCmd}: command not found`;
+        }
+        
+        logView.textContent += response + "\n";
+        logView.scrollTop = logView.scrollHeight;
+    }, 150);
+}
+
+// ─── JCS1 Loot Rendering ──────────────────────────────────────────────────
+function switchLootTab(tabName) {
+    activeLootTab = tabName;
+    document.querySelectorAll(".loot-tab").forEach(el => {
+        el.classList.toggle("active", el.id === `tab-${tabName}`);
+    });
+    if (pentestCampaignCache && pentestCampaignCache.loot) {
+        renderLoot(pentestCampaignCache.loot);
+    }
+}
+
+function renderLoot(loot) {
+    const contentEl = document.getElementById("loot-content-view");
+    if (!loot || (!loot.credentials && !loot.flags && !loot.system_info)) {
+        contentEl.innerHTML = `
+            <div class="loot-placeholder">
+                <i data-lucide="database" style="width:36px;height:36px;opacity:0.4;"></i>
+                <p>Credentials, shadow hashes, system flags, and post-exploitation evidence will catalog here.</p>
+            </div>
+        `;
+        lucide.createIcons();
+        return;
+    }
+
+    if (activeLootTab === "creds") {
+        const creds = loot.credentials || [];
+        if (creds.length === 0) {
+            contentEl.innerHTML = `<div class="loot-placeholder"><p>No credentials harvested yet.</p></div>`;
+            return;
+        }
+        let html = '<div class="loot-grid">';
+        creds.forEach(c => {
+            const val = c.password || c.password_hash || "";
+            html += `
+                <div class="loot-card">
+                    <div class="loot-card-header">
+                        <span class="loot-card-title">${c.username}</span>
+                        <span class="loot-badge">${c.service}</span>
+                    </div>
+                    <div class="loot-detail">${val}</div>
+                    <div class="loot-meta">${c.source}</div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        contentEl.innerHTML = html;
+    } else if (activeLootTab === "flags") {
+        const flags = loot.flags || [];
+        if (flags.length === 0) {
+            contentEl.innerHTML = `<div class="loot-placeholder"><p>No flags or configuration files retrieved.</p></div>`;
+            return;
+        }
+        let html = '<div class="loot-grid">';
+        flags.forEach(f => {
+            html += `
+                <div class="loot-card" style="border-color: rgba(245, 158, 11, 0.3);">
+                    <div class="loot-card-header">
+                        <span class="loot-card-title">${f.name}</span>
+                        <span class="loot-badge" style="color:#f59e0b;border-color:#f59e0b;background:rgba(245,158,11,0.1);">${f.path}</span>
+                    </div>
+                    <div class="loot-detail" style="color:#f59e0b;text-shadow:0 0 3px rgba(245, 158, 11, 0.3);">${f.content}</div>
+                    <div class="loot-meta">Extracted cryptography flag proving root system access.</div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        contentEl.innerHTML = html;
+    } else if (activeLootTab === "sysinfo") {
+        const info = loot.system_info;
+        if (!info || !info.hostname) {
+            contentEl.innerHTML = `<div class="loot-placeholder"><p>No compromised system specifications available.</p></div>`;
+            return;
+        }
+        contentEl.innerHTML = `
+            <table class="loot-sysinfo-table">
+                <tr><td>Hostname</td><td>${info.hostname}</td></tr>
+                <tr><td>Operating System</td><td>${info.os}</td></tr>
+                <tr><td>Kernel Version</td><td>${info.kernel}</td></tr>
+                <tr><td>System Uptime</td><td>${info.uptime}</td></tr>
+            </table>
+        `;
+    }
+}
+
+
+
+
+// ========================================
+// Modules Guide Modal
+// ========================================
+
+async function loadModulesGuide() {
+    const modal = document.getElementById("modules-guide-modal");
+    const content = document.getElementById("modules-guide-content");
+    
+    if (!modal || !content) {
+        console.error("Modules guide modal elements not found");
+        return;
+    }
+    
+    modal.style.display = "flex";
+    content.textContent = "Loading modules guide...";
+    
+    try {
+        const response = await fetch("/api/modules-guide");
+        const data = await response.json();
+        
+        if (data.guide) {
+            let html = data.guide
+                .replace(/# (.*?)\n/g, "<h1 style='color: #3b82f6; margin-top: 1.5rem; margin-bottom: 0.75rem;'>$1</h1>")
+                .replace(/## (.*?)\n/g, "<h2 style='color: #60a5fa; margin-top: 1rem; margin-bottom: 0.5rem;'>$1</h2>")
+                .replace(/### (.*?)\n/g, "<h3 style='color: #93c5fd; margin-top: 0.75rem; margin-bottom: 0.5rem;'>$1</h3>")
+                .replace(/\*\*(.*?)\*\*/g, "<strong style='color: #93c5fd;'>$1</strong>")
+                .replace(/`(.*?)`/g, "<code style='background: rgba(59, 130, 246, 0.1); padding: 2px 6px; border-radius: 4px; color: #60a5fa;'>$1</code>")
+                .replace(/\n\n/g, "<br><br>");
+            content.innerHTML = html;
+        } else {
+            content.textContent = "Error: " + (data.error || "Could not load guide");
+        }
+    } catch (err) {
+        content.textContent = "Failed to load modules guide: " + err.message;
+    }
+}
+
+// Wire up the modules guide button
+document.addEventListener("DOMContentLoaded", function() {
+    const guideBtn = document.getElementById("btn-modules-guide");
+    const closeBtn = document.getElementById("btn-close-guide");
+    const modal = document.getElementById("modules-guide-modal");
+    
+    if (guideBtn) {
+        guideBtn.addEventListener("click", loadModulesGuide);
+    }
+    
+    if (closeBtn) {
+        closeBtn.addEventListener("click", function() {
+            if (modal) modal.style.display = "none";
+        });
+    }
+    
+    if (modal) {
+        modal.addEventListener("click", function(e) {
+            if (e.target === modal) {
+                modal.style.display = "none";
+            }
+        });
+    }
+});

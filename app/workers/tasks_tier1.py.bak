@@ -1,0 +1,106 @@
+import socket
+import ipaddress
+from urllib.parse import urlparse
+from app.workers.celery_app import celery_app
+from app.core.database import SessionLocal
+from app.models.models import Campaign, Asset
+
+
+def _resolve_target(target: str) -> list[str]:
+    """
+    Extract IP/host from input (supporting URLs, ports, IPv6 brackets)
+    and resolve to a list of IP addresses (supporting IPv4 and IPv6).
+    """
+    clean_target = target.strip()
+
+    # 1. Parse as URL if scheme exists
+    if "://" in clean_target:
+        try:
+            parsed = urlparse(clean_target)
+            clean_target = parsed.netloc or parsed.path
+        except Exception:
+            pass
+
+    # 2. Extract host from bracketed IPv6 (e.g. [2405:200:1413::42c5]:7090)
+    if "[" in clean_target and "]" in clean_target:
+        start = clean_target.find("[")
+        end = clean_target.find("]")
+        clean_target = clean_target[start + 1:end]
+    else:
+        # Strip port if present (e.g., example.com:8080 or 192.168.1.1:8000)
+        if ":" in clean_target and clean_target.count(":") == 1:
+            clean_target = clean_target.split(":")[0]
+
+    # 3. Check if target is a direct IP (IPv4 or IPv6)
+    try:
+        ipaddress.ip_address(clean_target)
+        return [clean_target]
+    except ValueError:
+        pass
+
+    # 4. Resolve domain name (supporting IPv4 and IPv6)
+    ips = []
+    try:
+        # Try dnspython for A/AAAA records
+        try:
+            import dns.resolver
+            for rtype in ['A', 'AAAA']:
+                try:
+                    answers = dns.resolver.resolve(clean_target, rtype)
+                    ips.extend([str(rdata) for rdata in answers])
+                except Exception:
+                    pass
+            if ips:
+                return ips[:1]
+        except Exception:
+            pass
+
+        # Fallback using getaddrinfo
+        addr_info = socket.getaddrinfo(clean_target, None)
+        ips = list(set([info[4][0] for info in addr_info]))
+        if ips:
+            return ips[:1]
+    except Exception:
+        pass
+
+    return ["127.0.0.1"]  # Last resort fallback
+
+
+@celery_app.task(name="app.workers.tasks_tier1.passive_recon")
+def passive_recon(campaign_id: str, target: str):
+    db = SessionLocal()
+    try:
+        # Update campaign status
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign:
+            campaign.status = "RUNNING"
+            db.commit()
+
+        # Discover all IPs for the target using multi-record DNS resolution
+        discovered_ips = _resolve_target(target)
+
+        # Log discovered hosts as initial placeholder assets
+        for ip in discovered_ips:
+            asset = Asset(
+                campaign_id=campaign_id,
+                ip_address=ip,
+                hostname=f"recon-{ip.replace('.', '-').replace(':', '-')}",
+                port=0,
+                service="ping",
+                banner="Host discovered via passive DNS recon"
+            )
+            db.add(asset)
+        db.commit()
+
+        # Trigger Tier 2 Active Mapping
+        from app.workers.tasks_tier2 import active_mapping
+        active_mapping.delay(campaign_id, discovered_ips)
+
+    except Exception as e:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign:
+            campaign.status = "FAILED"
+            db.commit()
+        raise e
+    finally:
+        db.close()

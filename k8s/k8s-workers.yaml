@@ -1,0 +1,172 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jcs-worker-t1
+  namespace: jcs
+  labels:
+    app: worker-t1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-t1
+  template:
+    metadata:
+      labels:
+        app: worker-t1
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: worker-t1
+          image: docker.io/library/jcs-gateway:v2
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "celery", "-A", "app.workers.celery_app", "worker", "-Q", "tier1", "-c", "2", "--loglevel=info"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+          env:
+            - name: PYTHONPATH
+              value: "/app"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jcs-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jcs-secrets
+                  key: REDIS_URL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jcs-worker-t2
+  namespace: jcs
+  labels:
+    app: worker-t2
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-t2
+  template:
+    metadata:
+      labels:
+        app: worker-t2
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: worker-t2
+          image: docker.io/library/jcs-gateway:v2
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "celery", "-A", "app.workers.celery_app", "worker", "-Q", "tier2", "-c", "2", "--loglevel=info"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+          env:
+            - name: PYTHONPATH
+              value: "/app"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jcs-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jcs-secrets
+                  key: REDIS_URL
+            # Proxy settings so Tier 2 scanner can probe HTTP/HTTPS via corporate proxy
+            - name: HTTP_PROXY
+              value: "http://10.32.194.128:3128"
+            - name: HTTPS_PROXY
+              value: "http://10.32.194.128:3128"
+            - name: http_proxy
+              value: "http://10.32.194.128:3128"
+            - name: https_proxy
+              value: "http://10.32.194.128:3128"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jcs-worker-t3
+  namespace: jcs
+  labels:
+    app: worker-t3
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-t3
+  template:
+    metadata:
+      labels:
+        app: worker-t3
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: worker-t3
+          image: docker.io/library/jcs-gateway:v2
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "-m", "celery", "-A", "app.workers.celery_app", "worker", "-Q", "tier3", "-c", "1", "--loglevel=info"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+          env:
+            - name: PYTHONPATH
+              value: "/app"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jcs-secrets
+                  key: DATABASE_URL
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: jcs-secrets
+                  key: REDIS_URL
+            - name: HTTP_PROXY
+              value: "http://10.32.194.128:3128"
+            - name: HTTPS_PROXY
+              value: "http://10.32.194.128:3128"
+            - name: http_proxy
+              value: "http://10.32.194.128:3128"
+            - name: https_proxy
+              value: "http://10.32.194.128:3128"

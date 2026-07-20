@@ -1,0 +1,246 @@
+import os
+import socket
+import urllib.request
+import concurrent.futures
+from app.workers.celery_app import celery_app
+from app.core.database import SessionLocal
+from app.models.models import Campaign, Asset
+
+# Top ports to scan — common services including Redis, Postgres, etc.
+TOP_PORTS = [
+    21, 22, 23, 25, 53, 80, 110, 111, 135, 139, 143, 443, 445,
+    993, 995, 1723, 3306, 3389, 5432, 5900, 5985, 6379, 6443,
+    8080, 8443, 8888, 9200, 9300, 27017, 27018
+]
+
+# Port → service name mapping
+PORT_SERVICES = {
+    21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp", 53: "dns",
+    80: "http", 110: "pop3", 111: "rpcbind", 135: "msrpc",
+    139: "netbios-ssn", 143: "imap", 443: "https", 445: "microsoft-ds",
+    993: "imaps", 995: "pop3s", 1723: "pptp", 3306: "mysql",
+    3389: "rdp", 5432: "postgresql", 5900: "vnc", 5985: "wsman",
+    6379: "redis", 6443: "kubernetes", 8080: "http-alt",
+    8443: "https-alt", 8888: "http-alt", 9200: "elasticsearch",
+    9300: "elasticsearch", 27017: "mongodb", 27018: "mongodb"
+}
+
+# HTTP ports that support proxy-based banner probing
+HTTP_PORTS = {80, 8080, 8888}
+HTTPS_PORTS = {443, 8443}
+
+# Proxy from environment (set via Kubernetes secrets/configmap or host env)
+HTTP_PROXY = os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy") or ""
+HTTPS_PROXY = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or ""
+
+# Banner probes per service
+BANNER_PROBES = {
+    "http":       b"GET / HTTP/1.0\r\n\r\n",
+    "http-alt":   b"GET / HTTP/1.0\r\n\r\n",
+    "smtp":       b"EHLO scanner\r\n",
+    "ftp":        b"",
+    "ssh":        b"",
+    "redis":      b"PING\r\n",
+    "postgresql":  b"",
+    "mysql":      b"",
+}
+
+
+def _grab_banner_via_proxy(ip: str, port: int, timeout: float = 4.0) -> str:
+    """
+    Grab HTTP/HTTPS Server header by routing the request through the configured
+    system proxy. This works even when direct TCP connections are blocked by the
+    network (e.g. inside Minikube pods on a firewalled corporate network).
+    Handles non-2xx responses (e.g. 503 from proxy) gracefully — still extracts
+    the Server header from the error response.
+    Returns the banner string, or None if the port is completely unreachable.
+    """
+    import ssl
+    import urllib.error
+
+    try:
+        scheme = "https" if port in HTTPS_PORTS else "http"
+        # IPv6 addresses must be enclosed in brackets for URLs
+        host_part = f"[{ip}]" if ":" in ip else ip
+        url = f"{scheme}://{host_part}:{port}/"
+
+        proxy_map = {}
+        if scheme == "https" and HTTPS_PROXY:
+            proxy_map["https"] = HTTPS_PROXY
+        elif scheme == "http" and HTTP_PROXY:
+            proxy_map["http"] = HTTP_PROXY
+
+        if not proxy_map:
+            return None  # No proxy configured — cannot reach target via proxy
+
+        proxy_handler = urllib.request.ProxyHandler(proxy_map)
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        https_handler = urllib.request.HTTPSHandler(context=ctx)
+        opener = urllib.request.build_opener(proxy_handler, https_handler)
+        opener.addheaders = [("User-Agent", "JCS-Scanner/1.0")]
+
+        req = urllib.request.Request(url, method="HEAD")
+
+        def _extract_banner(headers):
+            server = headers.get("Server", "")
+            x_powered = headers.get("X-Powered-By", "")
+            parts = [p for p in [server, x_powered] if p]
+            return " | ".join(parts) if parts else f"{scheme}/open"
+
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                return _extract_banner(resp.headers)
+        except urllib.error.HTTPError as e:
+            # Distinguish "proxy blocked us before reaching the target"
+            # from "the target itself replied with an error status" —
+            # these mean very different things for a security report.
+            server_header = e.headers.get("Server", "") if e.headers else ""
+            if e.code == 403 and "squid" in server_header.lower():
+                return "PROXY_BLOCKED"
+            if e.headers:
+                banner = _extract_banner(e.headers)
+                return f"{banner} (HTTP {e.code})"
+            return f"{scheme}/open (HTTP {e.code})"
+
+    except Exception:
+        # Complete connection failure — port truly unreachable
+        return None
+
+
+
+
+def _grab_banner(ip: str, port: int, service: str, timeout: float = 2.0) -> str:
+    """Connect to port and grab the service banner."""
+    try:
+        with socket.create_connection((ip, port), timeout=timeout) as s:
+            s.settimeout(timeout)
+            probe = BANNER_PROBES.get(service, b"")
+            if probe:
+                s.sendall(probe)
+            try:
+                banner = s.recv(256).decode("utf-8", errors="replace").strip()
+                # Clean up banner
+                banner = " ".join(banner.split()[:12])  # max 12 words
+                return banner if banner else service
+            except Exception:
+                return service
+    except Exception:
+        return service
+
+
+def _scan_port(ip: str, port: int, timeout: float = 1.0) -> dict | None:
+    """
+    Try a direct TCP connect first -- this works for internal/allowlisted
+    targets (e.g. this VM's own subnet) that don't need the proxy at all.
+    If direct connect fails (typical for external internet targets in this
+    network) and the port is HTTP/HTTPS, fall back to a proxy-based HEAD
+    request. Non-web ports have no proxy path and are honestly reported as
+    not assessable, not "closed", when direct connect fails.
+    Returns dict if open/assessable ("blocked": True if proxy denied us),
+    None if genuinely unreachable/not assessable.
+    """
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            service = PORT_SERVICES.get(port, f"port-{port}")
+            banner = _grab_banner(ip, port, service)
+            return {"port": port, "service": service, "banner": banner}
+    except Exception:
+        pass
+
+    if port in HTTP_PORTS | HTTPS_PORTS:
+        proxy_banner = _grab_banner_via_proxy(ip, port)
+        service = PORT_SERVICES.get(port, f"port-{port}")
+        if proxy_banner == "PROXY_BLOCKED":
+            return {"port": port, "service": service, "banner": "Blocked by proxy egress policy", "blocked": True}
+        if proxy_banner is not None:
+            return {"port": port, "service": service, "banner": proxy_banner}
+
+    return None
+
+
+def _python_scan(ip: str, ports: list = TOP_PORTS, max_workers: int = 30) -> list[dict]:
+    """
+    Pure-Python concurrent TCP port scanner with proxy fallback for HTTP/HTTPS.
+    No CAP_NET_RAW required — uses socket.connect() only.
+    """
+    open_ports = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_scan_port, ip, port): port for port in ports}
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result:
+                open_ports.append(result)
+    return sorted(open_ports, key=lambda x: x["port"])
+
+
+@celery_app.task(name="app.workers.tasks_tier2.active_mapping")
+def active_mapping(campaign_id: str, ip_addresses: list):
+    """
+    Tier 2 — Active Mapping Worker.
+    Pure-Python concurrent TCP port scanner (no nmap, no special privileges).
+    Uses proxy-aware HTTP probing when direct TCP is blocked.
+    Reports zero findings honestly if no ports are reachable — no fabricated fallback.
+    """
+    db = SessionLocal()
+    try:
+        # Delete placeholder port-0 assets from Tier 1
+        db.query(Asset).filter(
+            Asset.campaign_id == campaign_id,
+            Asset.port == 0
+        ).delete()
+        db.commit()
+
+        for ip in ip_addresses:
+            scan_results = _python_scan(ip)
+            real_ports = [p for p in scan_results if not p.get("blocked")]
+            blocked_ports = [p for p in scan_results if p.get("blocked")]
+
+            for p in real_ports:
+                asset = Asset(
+                    campaign_id=campaign_id,
+                    ip_address=ip,
+                    hostname=f"node-{ip.replace('.', '-').replace(':', '-')}",
+                    port=p["port"],
+                    service=p["service"],
+                    banner=p["banner"],
+                    vulnerabilities=[]
+                )
+                db.add(asset)
+
+            # If nothing was reachable but the proxy actively denied us,
+            # say so explicitly -- this is NOT the same as a clean scan.
+            if not real_ports and blocked_ports:
+                asset = Asset(
+                    campaign_id=campaign_id,
+                    ip_address=ip,
+                    hostname=f"node-{ip.replace('.', '-').replace(':', '-')}",
+                    port=0,
+                    service="network-policy",
+                    banner=(
+                        f"{len(blocked_ports)} port(s) blocked by proxy egress "
+                        f"policy (Squid ERR_ACCESS_DENIED). External scan "
+                        f"inconclusive -- this environment restricts outbound "
+                        f"access to an allowlist. Not a verified clean result."
+                    ),
+                    vulnerabilities=[]
+                )
+                db.add(asset)
+            # If truly nothing found and nothing blocked, we record zero
+            # findings honestly -- no fabricated fallback.
+
+        db.commit()
+
+        # Chain into Tier 3 CVE Assessment
+        from app.workers.tasks_tier3 import cve_assessment
+        cve_assessment.delay(campaign_id, ip_addresses)
+
+    except Exception as e:
+        campaign = db.query(Campaign).filter(Campaign.id == campaign_id).first()
+        if campaign:
+            campaign.status = "FAILED"
+            db.commit()
+        raise e
+    finally:
+        db.close()
